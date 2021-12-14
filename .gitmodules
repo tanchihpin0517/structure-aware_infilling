@@ -1,0 +1,6 @@
+[submodule "dataset/pop909_struct"]
+	path = dataset/pop909_struct
+	url = git@github.com:Dsqvival/hierarchical-structure-analysis.git
+[submodule "dataset/pop909"]
+	path = dataset/pop909
+	url = git@github.com:music-x-lab/POP909-Dataset.git

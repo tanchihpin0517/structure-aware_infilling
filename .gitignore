@@ -1,0 +1,6 @@
+__pycache__/
+activate
+pyenv/
+test.py
+test/
+
