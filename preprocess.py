@@ -21,10 +21,10 @@ def pop909(dir_origin, dir_struct):
     #    if song:
     #        songs.append(song)
 
-    for i, song in enumerate(songs):
-        with open(f"test/{song.name}.txt", "w") as f:
-            for event in song:
-                f.write(f"{event}\n")
+    #for i, song in enumerate(songs):
+    #    with open(f"test/{song.name}.txt", "w") as f:
+    #        for event in song:
+    #            f.write(f"{event}\n")
 
 def pop_909_map_func(args):
     dir_origin, dir_struct, sub_dir, beat_division = args
