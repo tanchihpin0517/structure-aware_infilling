@@ -3,4 +3,4 @@ activate
 pyenv/
 test.py
 test/
-
+dataset/*.pickle
