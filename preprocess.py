@@ -2,8 +2,9 @@ import os
 import pretty_midi
 import multiprocessing as mp
 from tqdm import tqdm
-from misc import Event, Song
+from misc import Event, Song, Note
 import re
+import copy
 
 def pop909(dir_origin, dir_struct):
     songs = []
@@ -17,14 +18,9 @@ def pop909(dir_origin, dir_struct):
                 songs.append(song)
             pbar.update(1)
         pbar.close()
-    #for song in map(pop_909_map_func, map_args[:]):
+    #for song in map(pop_909_map_func, map_args[:1]):
     #    if song:
     #        songs.append(song)
-
-    #for i, song in enumerate(songs):
-    #    with open(f"test/{song.name}.txt", "w") as f:
-    #        for event in song:
-    #            f.write(f"{event}\n")
     return songs
 
 def pop_909_map_func(args):
@@ -122,6 +118,8 @@ def pop_909_map_func(args):
     song.beat_per_bar = beat_per_bar
     for bar, i in enumerate(range(first_bar_beat, len(song), beat_per_bar)):
         song[i].bar = bar
+    for bar, i in enumerate(range(first_bar_beat, 0, -beat_per_bar)):
+        song[i].bar = -bar
 
     # structural information
     with open(struct_1_file) as f:
@@ -156,23 +154,45 @@ def pop_909_map_func(args):
     song.extend(tmp)
 
     # add notes
-    notes = [y for x in [melody, bridge, piano] for y in x.notes]
-    #notes = [y for x in [melody,bridge] for y in x.notes]
+    notes = [Note(y, track=track) for x, track in [(melody, "melody"), (bridge, "bridge"), (piano, "piano")] for y in x.notes]
+    #notes = [Note(y, track=track) for x, track in [(melody, "melody")] for y in x.notes]
     cur_idx = 0
-    for note in sorted(notes, key=lambda note: note.start):
-        onset = note.start
+    for note in sorted(notes, key=lambda note: note.midi.start):
+        onset = note.midi.start
         for i in range(cur_idx, len(song)-1):
             if onset >= song[cur_idx+1].time:
                 cur_idx += 1
         if cur_idx == len(song)-1:
-            song[cur_idx].notes.append(note)
+            note.onset = cur_idx
         else:
             l, r = song[cur_idx].time, song[cur_idx+1].time
             if onset - l < r - onset:
-                song[cur_idx].notes.append(note)
+                note.onset = cur_idx
             else:
-                song[cur_idx+1].notes.append(note)
+                note.onset = cur_idx + 1
+
+    cur_idx = 0
+    for note in sorted(notes, key=lambda note: note.midi.end):
+        offset = note.midi.end
+        for i in range(cur_idx, len(song)-1):
+            if offset > song[cur_idx].time:
+                cur_idx += 1
+        note.duration = cur_idx - note.onset
+        if note.duration == 0:
+            note.duration += 1
+
+    for note in notes:
+        song[note.onset].notes.append(note)
+
     return song
 
+def _test_pop909():
+    songs = pop909("./dataset/pop909/POP909", "./dataset/pop909_struct/POP909")
+
+    for i, song in enumerate(songs):
+        with open(f"test/{song.name}.txt", "w") as f:
+            for event in song:
+                f.write(f"{event}\n")
+
 if __name__ == '__main__':
-    pop909("./dataset/pop909/POP909", "./dataset/pop909_struct/POP909")
+    _test_pop909()
