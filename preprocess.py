@@ -43,11 +43,16 @@ def pop_909_map_func(args):
     #chord_file = os.path.join(song_dir, "finalized_chord.txt")
     struct_1_file = os.path.join(song_dir, "human_label1.txt")
     struct_2_file = os.path.join(song_dir, "human_label2.txt")
+    tempo_file = os.path.join(song_dir, "tempo.txt")
 
     # initialize song
     song = Song(name=sub_dir, beat_division=beat_division)
     midi_data = pretty_midi.PrettyMIDI(midi_file)
     melody, bridge, piano = midi_data.instruments
+
+    # save tempo information
+    with open(tempo_file) as f:
+        song.bpm = int(f.readline())
 
     """
     From observation, it seems that neither "beat_audio.txt" of "beat_midi.txt"

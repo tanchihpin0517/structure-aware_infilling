@@ -232,14 +232,14 @@ class Config:
     def __init__(
         self,
         vocab_size,
-        d_embed = 256,
+        d_embed = 512,
         padding_idx = 0,
-        d_model = 256,
+        d_model = 512,
         n_head = 8,
         #d_head = 32,
-        d_inner = 1024,
-        n_layer = 6,
-        mem_len = 256, #1600,
+        d_inner = 2048,
+        n_layer = 8,
+        mem_len = 512, #1600,
         clamp_len = 1000,
         dropout = 0.1,
         xavier = False,
@@ -261,9 +261,10 @@ class Config:
 
 
 class Output:
-    def __init__(self, last_hidden_state=None, word_dist=None, mems=None, hidden_states=None, attentions=None):
-        self.last_hidden_state = last_hidden_state
-        self.word_dist = word_dist
+    def __init__(self, losses=None, last_hidden_states=None, pred_scores=None, mems=None, hidden_states=None, attentions=None):
+        self.losses = losses
+        self.last_hidden_states = last_hidden_states
+        self.pred_scores = pred_scores
         self.mems = mems
         self.hidden_states = hidden_states
         self.attentions = attentions
@@ -308,6 +309,7 @@ class Transformer(nn.Module):
 
         self.drop = nn.Dropout(config.dropout)
         self.softmax = nn.Softmax(dim = -1)
+        self.criterion = nn.CrossEntropyLoss(ignore_index=config.padding_idx, reduction="sum")
 
         self.apply(self._init_weights)
 
@@ -315,6 +317,7 @@ class Transformer(nn.Module):
         self,
         input_ids,
         mems=None,
+        labels=None,
         head_mask=None,
         inputs_embeds=None,
         output_attentions=False,
@@ -344,7 +347,10 @@ class Transformer(nn.Module):
         else:
             head_mask = [None] * self.n_layer
 
-        word_emb = self.word_emb(input_ids)
+        try:
+            word_emb = self.word_emb(input_ids)
+        except IndexError:
+            raise IndexError('Vocabulary size of model and input are not matched.')
 
         mlen = mems[0].size(0) if mems is not None else 0
         klen = mlen + qlen
@@ -395,11 +401,19 @@ class Transformer(nn.Module):
             attentions = tuple(t.permute(2, 3, 0, 1).contiguous() for t in attentions)
         # We transpose back here to shape [bsz, len, hidden_dim]
         core_out = core_out.transpose(0, 1).contiguous()
-        word_dist = self.softmax(self.trans_layer(core_out))
+        scores = self.trans_layer(core_out)
+        pred_scores = self.softmax(scores)
+
+        # torch does softmax in CrossEntropyLoss
+        if labels is not None:
+            losses = self.criterion(scores[:, :labels.size(1), :].transpose(1,2), labels)
+        else:
+            losses = None
 
         return Output(
-            last_hidden_state = core_out,
-            word_dist = word_dist,
+            losses = losses,
+            last_hidden_states = core_out,
+            pred_scores = pred_scores,
             mems = new_mems,
             #hidden_states = hids,
             #attentions = attentions,

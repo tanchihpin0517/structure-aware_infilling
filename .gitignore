@@ -4,4 +4,5 @@ pyenv/
 test.py
 test/
 dataset/*.pickle
-trained_model/
+trained_model*/
+gen_midi/

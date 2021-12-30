@@ -27,11 +27,22 @@ class Event:
         return f"time={'%.2f' % self.time}, label={self.struct}, chord={self.chord}, bar={self.bar}, {self.notes}"
 
 class Song(list):
-    def __init__(self, name=None, beat_per_bar=None, beat_division=None):
+    def __init__(self, name=None, beat_per_bar=None, beat_division=None, bpm=None, info=None, content=None):
         super().__init__()
         self.name = name
         self.beat_per_bar = beat_per_bar
         self.beat_division = beat_division
+        self.bpm = bpm
+        if info is not None:
+            self.info_copy(info)
+        if content is not None:
+            self.extend(content)
+
+    def info_copy(self, song):
+        self.name = song.name
+        self.beat_per_bar = song.beat_per_bar
+        self.beat_division = song.beat_division
+        self.bpm = song.bpm
 
 class Vocabulary:
     def __init__(self, vocab_file=None):
@@ -80,6 +91,7 @@ class Vocabulary:
         tokens.extend([f"Pitch({p})" for p in range(22, 108)])
         tokens.extend([f"Velocity({v})" for v in range(0, 132, 4)])
         tokens.extend([f"Duration({d})" for d in range(1,32+1)])
+        tokens.extend([f"Label({l})" for l in range(16)])
 
         for i, token in enumerate(tokens):
             self.token_to_id[token] = i
