@@ -6,3 +6,5 @@ test/
 dataset/*.pickle
 trained_model*/
 gen_midi/
+train.sh
+test.sh
