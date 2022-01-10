@@ -23,19 +23,19 @@ def parse_args():
     parser.add_argument('--save-path', type=str, default="trained_model/loss_nnn.ckpt")
     parser.add_argument('--ckpt-path', type=str, default=None)
 
-    parser.add_argument('--batch-size', type=int, default=16)
-    parser.add_argument('--seg-size', type=int, default=128)
+    parser.add_argument('--batch-size', type=int, default=4)
+    parser.add_argument('--seg-size', type=int, default=1024)
     parser.add_argument('--epoch-num', type=int, default=1000, help='number of training epochs')
 
     parser.add_argument('--training-split-ratio', type=int, default=9)
-    parser.add_argument('--max-gen-len', type=int, default=256, help='number of tokens in generation')
+    parser.add_argument('--max-gen-len', type=int, default=4096, help='number of tokens in generation')
     return parser.parse_args()
 
 def main():
     args = parse_args()
 
     #data = load_data(args.data_file, args.preprocess, melody_only=True, max_song_num=16)
-    data = load_data(args.data_file, args.preprocess, melody_only=True)
+    data = load_data(args.data_file, args.preprocess, track_sel=['melody', 'bridge'])
     vocab = load_vocab(args.vocab_file)
     songs = tokenize(data, vocab, split_empty_bar=0)
 
@@ -43,10 +43,10 @@ def main():
         training_songs = songs[len(songs)*(10-args.training_split_ratio)//10:]
         config = Config(
             vocab.size(),
-            d_embed = 256,
-            d_model = 256,
+            d_embed = 512,
+            d_model = 512,
             n_head = 8,
-            d_inner = 1024,
+            d_inner = 2048,
             n_layer = 8,
             mem_len = args.seg_size,
         )
@@ -85,7 +85,7 @@ def main():
                     f.write("\n".join(text))
 
 
-def load_data(data_file, preproc, melody_only=False, max_song_num=None):
+def load_data(data_file, preproc, track_sel=['melody', 'bridge', 'piano'], max_song_num=None):
     # load the data file if exists, otherwise re-preprocess.
     if os.path.exists(data_file) and not preproc:
         print("Data file already exists: " + data_file)
@@ -101,14 +101,13 @@ def load_data(data_file, preproc, melody_only=False, max_song_num=None):
         if max_song_num is not None:
             data = data[:max_song_num]
 
-        if melody_only:
-            for song in data:
-                for event in song:
-                    tmp = []
-                    for note in event.notes:
-                        if note.track == 'melody':
-                            tmp.append(note)
-                    event.notes = tmp
+        for song in data:
+            for event in song:
+                tmp = []
+                for note in event.notes:
+                    if note.track in track_sel:
+                        tmp.append(note)
+                event.notes = tmp
 
         with open(data_file, 'wb') as f:
             pickle.dump(data, f)

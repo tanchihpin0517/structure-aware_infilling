@@ -7,3 +7,5 @@ dataset/*.pickle
 trained_model*/
 gen_midi/
 .nfs*
+train.sh
+test.sh
