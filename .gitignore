@@ -6,3 +6,4 @@ test/
 dataset/*.pickle
 trained_model*/
 gen_midi/
+.nfs*
