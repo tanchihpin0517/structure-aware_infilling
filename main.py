@@ -65,14 +65,14 @@ def main():
                  args.cuda, args.seg_size, vocab)
 
     if args.generate:
-        songs = songs[:5]
+        songs = songs[:8]
         ckpt = torch.load(args.ckpt_path)
         model = Transformer(ckpt.config)
         model.load_state_dict(ckpt.model_state_dict)
         vocab = ckpt.vocab
         print("ckpt:", "args.ckpt_path", ", epoch:", ckpt.epoch, ", loss:", ckpt.loss)
         with torch.no_grad():
-            prompt_ids = select_first_n_bar(songs, vocab, 16)
+            prompt_ids = select_first_n_bar(songs, vocab, 8)
             result_ids = generate(model, prompt_ids,
                               args.cuda, args.seg_size, vocab, max_gen_len=args.max_gen_len)
 
@@ -80,9 +80,12 @@ def main():
                 song = Song(); song.info_copy(prompt_ids[i])
                 song.extend(prompt_ids[i] + result_ids[i])
                 midi_data, text = token_ids_to_midi(song, vocab)
-                midi_data.write(f"./gen_midi/{song.name}.midi")
-                with open(f"./gen_midi/{song.name}.txt", "w") as f:
-                    f.write("\n".join(text))
+                save_dir = f"./gen_midi/{math.floor(ckpt.loss*10)/10.0}"
+                if not os.path.isdir(save_dir):
+                    os.makedirs(save_dir)
+                midi_data.write(os.path.join(save_dir, f"{song.name}.midi"))
+                #with open(f"./gen_midi/{song.name}.txt", "w") as f:
+                #    f.write("\n".join(text))
 
 
 def load_data(data_file, preproc, track_sel=['melody', 'bridge', 'piano'], max_song_num=None):

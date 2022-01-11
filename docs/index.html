@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Expansion</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Arimo&family=Varela+Round&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Literata&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="index.css">
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+  <script src="./assets/js/index.js"></script>
+</head>
+
+<body>
+  <header class="page-header">
+    <h1 class="">Music Score Expansion with Variable-Length Infilling</h1>
+    <h2 class="">Demo of music score expansion with the model proposed in "Variable-Length Music Score Infilling via XLNet and Musically Specialized Positional Encoding"</h2>
+    <a class="page-header__link" target='_blank' href="https://github.com/tanchihpin0517/structural_expansion">
+      Github</a>
+    <a class="page-header__link" target='_blank' href="">
+      Paper</a>
+  </header>
+
+  <main>
+    <section id="inpainted-music">
+      <h2>Music expanded by the variable-length infilling model</h2>
+      <p>These songs are the original and expended music in our work.</p>
+      <p>Note: If you are browsing this page using an iPhone, please remember to turn the silent mode off through the
+        switch on the side of your iPhone.</p>
+
+      <!-- input: losses, song_idx -->
+      <section id="inpainted-music-song-001">
+        <h3>Song 001</h3>
+        <div class='anchor-container'>
+          <a 
+            midi-url="assets/songs/0.0/001.midi">0.0</a>
+          <a 
+            midi-url="assets/songs/0.1/001.midi">0.1</a>
+          <a 
+            class='selected' 
+            midi-url="assets/songs/0.2/001.midi">0.2</a>
+          <a 
+            midi-url="assets/songs/0.3/001.midi">0.3</a>
+          <a 
+            midi-url="assets/songs/0.4/001.midi">0.4</a>
+          <a 
+            midi-url="assets/songs/0.5/001.midi">0.5</a>
+          <a 
+            midi-url="assets/songs/0.6/001.midi">0.6</a>
+          <a 
+            midi-url="assets/songs/0.7/001.midi">0.7</a>
+          <a 
+            midi-url="assets/songs/0.8/001.midi">0.8</a>
+          <a 
+            midi-url="assets/songs/0.9/001.midi">0.9</a>
+        </div>
+        <midi-visualizer id='inpainted-music-song-001-visualizer'
+          src="assets/songs/0.2/001.midi">
+        </midi-visualizer>
+        <midi-player id='inpainted-music-song-001-player'
+          src="assets/songs/0.2/001.midi"
+          sound-font="https://storage.googleapis.com/magentadata/js/soundfonts/salamander"
+          visualizer="#inpainted-music-song-001-visualizer">
+        </midi-player>
+      </section>
+      <!-- input: losses, song_idx -->
+      <section id="inpainted-music-song-002">
+        <h3>Song 002</h3>
+        <div class='anchor-container'>
+          <a 
+            midi-url="assets/songs/0.0/002.midi">0.0</a>
+          <a 
+            midi-url="assets/songs/0.1/002.midi">0.1</a>
+          <a 
+            class='selected' 
+            midi-url="assets/songs/0.2/002.midi">0.2</a>
+          <a 
+            midi-url="assets/songs/0.3/002.midi">0.3</a>
+          <a 
+            midi-url="assets/songs/0.4/002.midi">0.4</a>
+          <a 
+            midi-url="assets/songs/0.5/002.midi">0.5</a>
+          <a 
+            midi-url="assets/songs/0.6/002.midi">0.6</a>
+          <a 
+            midi-url="assets/songs/0.7/002.midi">0.7</a>
+          <a 
+            midi-url="assets/songs/0.8/002.midi">0.8</a>
+          <a 
+            midi-url="assets/songs/0.9/002.midi">0.9</a>
+        </div>
+        <midi-visualizer id='inpainted-music-song-002-visualizer'
+          src="assets/songs/0.2/002.midi">
+        </midi-visualizer>
+        <midi-player id='inpainted-music-song-002-player'
+          src="assets/songs/0.2/002.midi"
+          sound-font="https://storage.googleapis.com/magentadata/js/soundfonts/salamander"
+          visualizer="#inpainted-music-song-002-visualizer">
+        </midi-player>
+      </section>
+      <!-- input: losses, song_idx -->
+      <section id="inpainted-music-song-003">
+        <h3>Song 003</h3>
+        <div class='anchor-container'>
+          <a 
+            midi-url="assets/songs/0.0/003.midi">0.0</a>
+          <a 
+            midi-url="assets/songs/0.1/003.midi">0.1</a>
+          <a 
+            class='selected' 
+            midi-url="assets/songs/0.2/003.midi">0.2</a>
+          <a 
+            midi-url="assets/songs/0.3/003.midi">0.3</a>
+          <a 
+            midi-url="assets/songs/0.4/003.midi">0.4</a>
+          <a 
+            midi-url="assets/songs/0.5/003.midi">0.5</a>
+          <a 
+            midi-url="assets/songs/0.6/003.midi">0.6</a>
+          <a 
+            midi-url="assets/songs/0.7/003.midi">0.7</a>
+          <a 
+            midi-url="assets/songs/0.8/003.midi">0.8</a>
+          <a 
+            midi-url="assets/songs/0.9/003.midi">0.9</a>
+        </div>
+        <midi-visualizer id='inpainted-music-song-003-visualizer'
+          src="assets/songs/0.2/003.midi">
+        </midi-visualizer>
+        <midi-player id='inpainted-music-song-003-player'
+          src="assets/songs/0.2/003.midi"
+          sound-font="https://storage.googleapis.com/magentadata/js/soundfonts/salamander"
+          visualizer="#inpainted-music-song-003-visualizer">
+        </midi-player>
+      </section>
+      <!-- input: losses, song_idx -->
+      <section id="inpainted-music-song-004">
+        <h3>Song 004</h3>
+        <div class='anchor-container'>
+          <a 
+            midi-url="assets/songs/0.0/004.midi">0.0</a>
+          <a 
+            midi-url="assets/songs/0.1/004.midi">0.1</a>
+          <a 
+            class='selected' 
+            midi-url="assets/songs/0.2/004.midi">0.2</a>
+          <a 
+            midi-url="assets/songs/0.3/004.midi">0.3</a>
+          <a 
+            midi-url="assets/songs/0.4/004.midi">0.4</a>
+          <a 
+            midi-url="assets/songs/0.5/004.midi">0.5</a>
+          <a 
+            midi-url="assets/songs/0.6/004.midi">0.6</a>
+          <a 
+            midi-url="assets/songs/0.7/004.midi">0.7</a>
+          <a 
+            midi-url="assets/songs/0.8/004.midi">0.8</a>
+          <a 
+            midi-url="assets/songs/0.9/004.midi">0.9</a>
+        </div>
+        <midi-visualizer id='inpainted-music-song-004-visualizer'
+          src="assets/songs/0.2/004.midi">
+        </midi-visualizer>
+        <midi-player id='inpainted-music-song-004-player'
+          src="assets/songs/0.2/004.midi"
+          sound-font="https://storage.googleapis.com/magentadata/js/soundfonts/salamander"
+          visualizer="#inpainted-music-song-004-visualizer">
+        </midi-player>
+      </section>
+      <!-- input: losses, song_idx -->
+      <section id="inpainted-music-song-005">
+        <h3>Song 005</h3>
+        <div class='anchor-container'>
+          <a 
+            midi-url="assets/songs/0.0/005.midi">0.0</a>
+          <a 
+            midi-url="assets/songs/0.1/005.midi">0.1</a>
+          <a 
+            class='selected' 
+            midi-url="assets/songs/0.2/005.midi">0.2</a>
+          <a 
+            midi-url="assets/songs/0.3/005.midi">0.3</a>
+          <a 
+            midi-url="assets/songs/0.4/005.midi">0.4</a>
+          <a 
+            midi-url="assets/songs/0.5/005.midi">0.5</a>
+          <a 
+            midi-url="assets/songs/0.6/005.midi">0.6</a>
+          <a 
+            midi-url="assets/songs/0.7/005.midi">0.7</a>
+          <a 
+            midi-url="assets/songs/0.8/005.midi">0.8</a>
+          <a 
+            midi-url="assets/songs/0.9/005.midi">0.9</a>
+        </div>
+        <midi-visualizer id='inpainted-music-song-005-visualizer'
+          src="assets/songs/0.2/005.midi">
+        </midi-visualizer>
+        <midi-player id='inpainted-music-song-005-player'
+          src="assets/songs/0.2/005.midi"
+          sound-font="https://storage.googleapis.com/magentadata/js/soundfonts/salamander"
+          visualizer="#inpainted-music-song-005-visualizer">
+        </midi-player>
+      </section>
+      <!-- input: losses, song_idx -->
+      <section id="inpainted-music-song-006">
+        <h3>Song 006</h3>
+        <div class='anchor-container'>
+          <a 
+            midi-url="assets/songs/0.0/006.midi">0.0</a>
+          <a 
+            midi-url="assets/songs/0.1/006.midi">0.1</a>
+          <a 
+            class='selected' 
+            midi-url="assets/songs/0.2/006.midi">0.2</a>
+          <a 
+            midi-url="assets/songs/0.3/006.midi">0.3</a>
+          <a 
+            midi-url="assets/songs/0.4/006.midi">0.4</a>
+          <a 
+            midi-url="assets/songs/0.5/006.midi">0.5</a>
+          <a 
+            midi-url="assets/songs/0.6/006.midi">0.6</a>
+          <a 
+            midi-url="assets/songs/0.7/006.midi">0.7</a>
+          <a 
+            midi-url="assets/songs/0.8/006.midi">0.8</a>
+          <a 
+            midi-url="assets/songs/0.9/006.midi">0.9</a>
+        </div>
+        <midi-visualizer id='inpainted-music-song-006-visualizer'
+          src="assets/songs/0.2/006.midi">
+        </midi-visualizer>
+        <midi-player id='inpainted-music-song-006-player'
+          src="assets/songs/0.2/006.midi"
+          sound-font="https://storage.googleapis.com/magentadata/js/soundfonts/salamander"
+          visualizer="#inpainted-music-song-006-visualizer">
+        </midi-player>
+      </section>
+      <!-- input: losses, song_idx -->
+      <section id="inpainted-music-song-007">
+        <h3>Song 007</h3>
+        <div class='anchor-container'>
+          <a 
+            midi-url="assets/songs/0.0/007.midi">0.0</a>
+          <a 
+            midi-url="assets/songs/0.1/007.midi">0.1</a>
+          <a 
+            class='selected' 
+            midi-url="assets/songs/0.2/007.midi">0.2</a>
+          <a 
+            midi-url="assets/songs/0.3/007.midi">0.3</a>
+          <a 
+            midi-url="assets/songs/0.4/007.midi">0.4</a>
+          <a 
+            midi-url="assets/songs/0.5/007.midi">0.5</a>
+          <a 
+            midi-url="assets/songs/0.6/007.midi">0.6</a>
+          <a 
+            midi-url="assets/songs/0.7/007.midi">0.7</a>
+          <a 
+            midi-url="assets/songs/0.8/007.midi">0.8</a>
+          <a 
+            midi-url="assets/songs/0.9/007.midi">0.9</a>
+        </div>
+        <midi-visualizer id='inpainted-music-song-007-visualizer'
+          src="assets/songs/0.2/007.midi">
+        </midi-visualizer>
+        <midi-player id='inpainted-music-song-007-player'
+          src="assets/songs/0.2/007.midi"
+          sound-font="https://storage.googleapis.com/magentadata/js/soundfonts/salamander"
+          visualizer="#inpainted-music-song-007-visualizer">
+        </midi-player>
+      </section>
+      <!-- input: losses, song_idx -->
+      <section id="inpainted-music-song-008">
+        <h3>Song 008</h3>
+        <div class='anchor-container'>
+          <a 
+            midi-url="assets/songs/0.0/008.midi">0.0</a>
+          <a 
+            midi-url="assets/songs/0.1/008.midi">0.1</a>
+          <a 
+            class='selected' 
+            midi-url="assets/songs/0.2/008.midi">0.2</a>
+          <a 
+            midi-url="assets/songs/0.3/008.midi">0.3</a>
+          <a 
+            midi-url="assets/songs/0.4/008.midi">0.4</a>
+          <a 
+            midi-url="assets/songs/0.5/008.midi">0.5</a>
+          <a 
+            midi-url="assets/songs/0.6/008.midi">0.6</a>
+          <a 
+            midi-url="assets/songs/0.7/008.midi">0.7</a>
+          <a 
+            midi-url="assets/songs/0.8/008.midi">0.8</a>
+          <a 
+            midi-url="assets/songs/0.9/008.midi">0.9</a>
+        </div>
+        <midi-visualizer id='inpainted-music-song-008-visualizer'
+          src="assets/songs/0.2/008.midi">
+        </midi-visualizer>
+        <midi-player id='inpainted-music-song-008-player'
+          src="assets/songs/0.2/008.midi"
+          sound-font="https://storage.googleapis.com/magentadata/js/soundfonts/salamander"
+          visualizer="#inpainted-music-song-008-visualizer">
+        </midi-player>
+      </section>
+    </section>
+
+    <footer class="site-footer">
+      <span class="site-footer-credit">We use
+        <a target='_blank' href='https://github.com/cifkao/html-midi-player'>html_midi_player</a>
+        built and kindly shared publicly by
+        <a target='_blank' href="https://ondrej.cifka.com">Ondřej Cífka</a>
+        for visualizing the piano rolls of the MIDI files. We have also made this implementation
+        of the website public at the <a target='_blank'
+          href="https://github.com/jackyhsiung/piano-infilling-demo">Github repository</a>.
+      </span>
+    </footer>
+  </main>
+  <script
+    src="https://cdn.jsdelivr.net/combine/npm/tone@14.7.58,npm/@magenta/music@1.21.0/es6/core.js,npm/focus-visible@5,npm/html-midi-player@1.1.0"></script>
+
+</body>
+
+</html>

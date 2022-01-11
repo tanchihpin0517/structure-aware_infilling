@@ -1,0 +1,157 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  font-family: 'Arimo', sans-serif;
+  font-family: 'Varela Round', sans-serif;
+  font-size: 16px;
+}
+
+.page-header {
+  padding: 3rem;
+  text-align: center;
+  color: #fff;
+  background: linear-gradient(to right, #e96443, #904e95); /* W3C, IE 10+/ Edge, Firefox 16+, Chrome 26+, Opera 12+, Safari 7+ */
+}
+.page-header h2 {
+  font-weight: normal;
+}
+.page-header__link {
+  text-decoration: none;
+  font-size: 1rem;
+  padding: 0.6rem 0.9rem;
+  display: inline-block;
+  margin: 0 0.25rem 1rem 0.25rem;
+  color: rgba(255, 255, 255, 0.7);
+  background-color: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+  border-style: solid;
+  border-width: 1px;
+  border-radius: 0.3rem;
+  transition: color 0.2s, background-color 0.2s, border-color 0.2s, box-shadow 0.2s;
+}
+
+.page-header__link:hover {
+  color: #ffffff;
+  background-color: #904e95;
+  border-color: #904e95;
+  box-shadow: rgba(0, 0, 0, 0.16) 0px 1px 4px;
+}
+
+/* #inpainted-music, #controll-number-of-bars {
+  padding: 0 2rem;
+} */
+main {
+  padding: 2rem 1rem;
+}
+#inpainted-music h2, #controll-number-of-bars h2,
+#inpainted-music h3, #controll-number-of-bars h3  {
+  color: #e96443;
+  opacity: 0.9;
+  margin-top: 2rem;
+  margin-bottom: 1rem;
+  font-weight: normal;
+}
+#inpainted-music p, #controll-number-of-bars p {
+  font-family: 'Literata', serif;
+  color: #606c71;
+}
+
+#inpainted-music h2, #controll-number-of-bars h2,
+#inpainted-music h3, #controll-number-of-bars h3,
+#inpainted-music p, #controll-number-of-bars p  {
+  margin-left: 4px;
+  margin-right: 4px;
+}
+
+/* Custom player style */
+midi-player {
+  display: block;
+  width: inherit;
+  margin: 0 4px 1.5rem 4px;
+  margin-top: 0;
+}
+
+midi-player::part(control-panel) {
+  background: linear-gradient(#fefefe, #e9e9e9);
+  border: 1px solid #e9e9e9;
+  border-top: none;
+  border-radius: 0 0 10px 10px;
+}
+
+midi-visualizer .piano-roll-visualizer {
+  background: #fefefe;
+  border: 1px solid #e9e9e9;
+  border-bottom: none;
+  /* border-radius: 10px 10px 0 0 ; */
+  margin: 0 4px;
+  margin-bottom: 0;
+  overflow: auto;
+}
+midi-visualizer svg rect.note {
+  opacity: 0.6;
+}
+midi-visualizer svg rect.note[data-instrument="0"]{
+  fill: #e22;
+}
+midi-visualizer svg rect.note[data-instrument="1"]{
+  fill: #904e95;
+}
+
+midi-visualizer svg rect.note.active {
+  opacity: 1.0;
+  stroke: slategrey;
+}
+
+.anchor-container {
+  margin-top: 1.5rem;
+  margin-left: 4px;
+  display: flex;
+}
+
+#inpainted-music a, #controll-number-of-bars a {
+  color:#e96443;
+  display: block;
+  padding: 1rem 1.5rem;
+  margin-bottom: -1px;
+  border: 1px solid transparent;
+  /* border-bottom-color: #e0e0e0; */
+  border-bottom: none;
+  border-radius: 10px 10px 0 0;
+  text-decoration: none;
+  border-color: #e0e0e0;
+  border-bottom-color: #fefefe;
+}
+
+#inpainted-music a.selected, #controll-number-of-bars a.selected {
+  /* border-color: #e0e0e0;
+  border-bottom-color: #fefefe; */
+  /* padding: 1rem 2rem; */
+  background: #e96443;
+  color: #fefefe;
+}
+#inpainted-music a:hover, #controll-number-of-bars a:hover,
+#inpainted-music a.selected:hover, #controll-number-of-bars a.selected:hover  {
+  background: #e96443;
+  color: #ffffff;
+  cursor: pointer;
+}
+
+.site-footer {
+  margin: 0 4px;
+  padding: 1.5rem 0;
+  text-align: center;
+  border-top: solid 1px #eff0f1;
+}
+
+.site-footer-credit {
+  padding-left: 4px;
+  font-family: 'Literata', serif;
+  color: #606c71;
+}
+
+.site-footer-credit a {
+  text-decoration: none;
+  color:#e96443;
+  opacity: 0.9;
+}
+

@@ -1,1 +1,4 @@
-python main.py --generate --ckpt-path ./trained_model/loss_2.ckpt
+for i in {0..9}; do
+    CKPT="./trained_model/loss_$i.ckpt"
+    python main.py --generate --cuda --ckpt-path $CKPT
+done

@@ -1,0 +1,19 @@
+<section>
+  {{ haha }}
+  {% if a < b %}
+    <h1> AAA. {{ haha }}</h1>
+    {% if b < c %}
+      <h1> BBB. {{ haha }}</h1>
+    {% endif%}
+    <h1> CCC. {{ haha }}</h1>
+  {% endif %}
+
+  {% for i in [1,2,3] %}
+    {% for j in [1,2,3] %}
+      {{ i , j }}
+    {% endfor %}
+  {% endfor %}
+  {{ haha }}
+
+  {% include "test2.html" with a=1 b=2%}
+</section>

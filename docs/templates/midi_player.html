@@ -1,0 +1,21 @@
+<!-- input: losses, song_idx -->
+<section id="inpainted-music-song-{{song_idx}}">
+  <h3>Song {{song_idx}}</h3>
+  <div class='anchor-container'>
+    {% for loss in losses %}
+    <a 
+      {% if loss == "0.2" %} 
+      class='selected' 
+      {% endif %}
+      midi-url="assets/songs/{{loss}}/{{song_idx}}.midi">{{loss}}</a>
+    {% endfor %}
+  </div>
+  <midi-visualizer id='inpainted-music-song-{{song_idx}}-visualizer'
+    src="assets/songs/0.2/{{song_idx}}.midi">
+  </midi-visualizer>
+  <midi-player id='inpainted-music-song-{{song_idx}}-player'
+    src="assets/songs/0.2/{{song_idx}}.midi"
+    sound-font="https://storage.googleapis.com/magentadata/js/soundfonts/salamander"
+    visualizer="#inpainted-music-song-{{song_idx}}-visualizer">
+  </midi-player>
+</section>
