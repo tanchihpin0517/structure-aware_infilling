@@ -2,19 +2,21 @@
 <section id="inpainted-music-song-{{song_idx}}">
   <h3>Song {{song_idx}}</h3>
   <div class='anchor-container'>
+    {% with gh_url="https://cdn.jsdelivr.net/gh/tanchihpin0517/variable-length-piano-expansion" sel_loss="0.0" %}
     {% for loss in losses %}
-    <a 
-      {% if loss == "0.2" %} 
-      class='selected' 
-      {% endif %}
-      midi-url="assets/songs/{{loss}}/{{song_idx}}.midi">{{loss}}</a>
+    {% if loss == sel_loss %}
+    <a {% if github %}midi-url="{{gh_url}}/docs/assets/songs/{{loss}}/{{song_idx}}.midi"{% else %}midi-url="assets/songs/{{loss}}/{{song_idx}}.midi"{% endif %}
+      class='selected'>{{loss}}</a>
+    {% else %}
+    <a {% if github %}midi-url="{{gh_url}}/docs/assets/songs/{{loss}}/{{song_idx}}.midi"{% else %}midi-url="assets/songs/{{loss}}/{{song_idx}}.midi"{% endif %}>{{loss}}</a>
+    {% endif %}
     {% endfor %}
   </div>
   <midi-visualizer id='inpainted-music-song-{{song_idx}}-visualizer'
-    src="assets/songs/0.2/{{song_idx}}.midi">
+    {% if github %}src="{{gh_url}}/docs/assets/songs/{{sel_loss}}/{{song_idx}}.midi"{% else %}src="assets/songs/{{sel_loss}}/{{song_idx}}.midi"{% endif %}>
   </midi-visualizer>
   <midi-player id='inpainted-music-song-{{song_idx}}-player'
-    src="assets/songs/0.2/{{song_idx}}.midi"
+    {% if github %}src="{{gh_url}}/docs/assets/songs/{{sel_loss}}/{{song_idx}}.midi"{% else %}src="assets/songs/{{sel_loss}}/{{song_idx}}.midi"{% endif %}
     sound-font="https://storage.googleapis.com/magentadata/js/soundfonts/salamander"
     visualizer="#inpainted-music-song-{{song_idx}}-visualizer">
   </midi-player>

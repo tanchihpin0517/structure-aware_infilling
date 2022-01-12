@@ -28,9 +28,12 @@ def main():
                 if idx not in songs:
                     songs.append(idx)
     songs.sort()
+    #songs = songs[:4]
     losses.sort()
+    losses = losses[:4]
 
-    content = template.render(losses=losses, songs=songs)
+    table = {"losses":losses, "songs":songs, "github":False}
+    content = template.render(table)
     with open(args.index_file, 'w') as f:
         f.write(content)
 
