@@ -208,7 +208,7 @@ def train(model, songs, epoch_num, batch_size, seg_size, cuda, config, vocab, sa
     tokens = []
     for song in songs:
         tokens.append(song[:max_seq_len] + [0 for i in range(max_seq_len-len(song))])
-    tokens = torch.tensor(tokens, dtype=int)
+    tokens = torch.tensor(tokens, dtype=torch.int)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 
@@ -260,7 +260,7 @@ def test(model, song, cuda, seg_size, vocab):
     model.eval()
     model = model.cuda() if cuda else model
 
-    tokens = torch.tensor(song, dtype=int)
+    tokens = torch.tensor(song, dtype=torch.int)
     # limit segment length not longer than memory length
     seg_size = model.mem_len if model.mem_len < seg_size else seg_size
 
@@ -282,7 +282,7 @@ def test(model, song, cuda, seg_size, vocab):
         if cuda:
             seg = seg.cuda()
         for i in range(len(seg)):
-            input_ids = torch.tensor(output_ids, dtype=int)[None, :]
+            input_ids = torch.tensor(output_ids, dtype=torch.int)[None, :]
             output = model(input_ids=input_ids, mems=None)
             output_ids.append(torch.argmax(output.pred_scores, dim=-1)[0][-1].item())
         print(list(map(lambda i: vocab[i], output_ids)))
@@ -295,7 +295,7 @@ def test(model, song, cuda, seg_size, vocab):
         if cuda:
             seg = seg.cuda()
         for i in range(len(seg)):
-            input_ids = torch.tensor(output_ids, dtype=int)[None, -1:]
+            input_ids = torch.tensor(output_ids, dtype=torch.int)[None, -1:]
             output = model(input_ids=input_ids, mems=mems)
             mems = output.mems
             output_ids.append(torch.argmax(output.pred_scores, dim=-1)[0][-1].item())
@@ -326,7 +326,7 @@ def generate(model, prompts, cuda, seg_size, vocab, max_gen_len):
     pbar = tqdm(desc="Generating", total=len(prompts))
     for prompt in prompts:
         result = Song(); result.info_copy(prompt)
-        prompt = torch.tensor(prompt, dtype=int)
+        prompt = torch.tensor(prompt, dtype=torch.int)
         # limit segment length not longer than memory length
         seg_size = model.mem_len if model.mem_len < seg_size else seg_size
 
@@ -352,13 +352,14 @@ def generate(model, prompts, cuda, seg_size, vocab, max_gen_len):
         total_gen_num = 0
         gen_id = first_gen_id.item()
         while True:
-            segs = torch.tensor(gen_id, dtype=int).view(1,1)
+            segs = torch.tensor(gen_id, dtype=torch.int).view(1,1)
             segs = segs.cuda() if cuda else segs
 
             output = model(input_ids=segs, mems=mems)
             mems = output.mems
 
-            gen_id = torch.argmax(output.pred_scores, dim=-1)[0, -1].item()
+            #gen_id = torch.argmax(output.pred_scores, dim=-1)[0, -1].item()
+            gen_id = model.nucleus(output.pred_scores)[0, -1].item()
             total_gen_num += 1
             #print(vocab[gen_id])
             result.append(gen_id)

@@ -12,7 +12,7 @@ class PositionalEmbedding(nn.Module):
         self.register_buffer("inv_freq", inv_freq)
 
     def forward(self, pos_seq, bsz=None):
-        sinusoid_inp = torch.ger(pos_seq, self.inv_freq)
+        sinusoid_inp = torch.outer(pos_seq, self.inv_freq)
         pos_emb = torch.cat([sinusoid_inp.sin(), sinusoid_inp.cos()], dim=-1)
 
         if bsz is not None:
@@ -418,6 +418,22 @@ class Transformer(nn.Module):
             #hidden_states = hids,
             #attentions = attentions,
         )
+
+    def nucleus(self, scores, p=0.9, k=8):
+        dims = scores.size()
+        pre_size = 1
+        for d in dims[:-1]:
+            pre_size *= d
+
+        t = scores.view(pre_size, dims[-1])
+        t, idx = torch.sort(t, dim=-1, descending=True)
+        not_sel = torch.cumsum(t, dim=-1) >= p
+        not_sel[..., :k] = False # make sure there are at least k candidates
+        t[not_sel] = 0.0
+        choice = torch.multinomial(t, 1) # The rows of input do not need to sum to one
+        real_choice = idx[torch.arange(pre_size), choice.view(-1)]
+
+        return real_choice.view(dims[:-1])
 
     def _init_weights(self, m):
         """Initialize the weights."""

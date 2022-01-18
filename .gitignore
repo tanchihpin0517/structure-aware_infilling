@@ -1,6 +1,6 @@
 __pycache__/
 activate
-pyenv/
+.env/
 test.py
 test/
 dataset/*.pickle
