@@ -87,6 +87,13 @@ def main():
                 #with open(f"./gen_midi/{song.name}.txt", "w") as f:
                 #    f.write("\n".join(text))
 
+                save_dir = f"./gen_tokens/{math.floor(ckpt.loss*10)/10.0}"
+                if not os.path.isdir(save_dir):
+                    os.makedirs(save_dir)
+                import json 
+                with open(os.path.join(save_dir, f"{song.name}.json"),'w') as f:
+                    json.dump(song,f)
+
 
 def load_data(data_file, preproc, track_sel=['melody', 'bridge', 'piano'], max_song_num=None):
     # load the data file if exists, otherwise re-preprocess.
