@@ -9,3 +9,4 @@ gen_midi/
 .nfs*
 train.sh
 test.sh
+.vscode
