@@ -78,7 +78,7 @@ def main():
 
             for i in range(len(prompt_ids)):
                 song = Song(); song.info_copy(prompt_ids[i])
-                song.extend(prompt_ids[i] + result_ids[i])
+                song.extend(prompt_ids[i]+ result_ids[i])
                 midi_data, text = token_ids_to_midi(song, vocab)
                 save_dir = f"./gen_midi/{math.floor(ckpt.loss*10)/10.0}"
                 if not os.path.isdir(save_dir):
@@ -86,6 +86,16 @@ def main():
                 midi_data.write(os.path.join(save_dir, f"{song.name}.midi"))
                 #with open(f"./gen_midi/{song.name}.txt", "w") as f:
                 #    f.write("\n".join(text))
+
+                song = Song(); song.info_copy(prompt_ids[i])
+                song.extend(prompt_ids[i] + [242] + result_ids[i]) # BOG = Begin of generation
+
+                save_dir = f"./gen_tokens/{math.floor(ckpt.loss*10)/10.0}"
+                if not os.path.isdir(save_dir):
+                    os.makedirs(save_dir)
+                import json 
+                with open(os.path.join(save_dir, f"{song.name}.json"),'w') as f:
+                    json.dump(song,f)
 
 
 def load_data(data_file, preproc, track_sel=['melody', 'bridge', 'piano'], max_song_num=None):
