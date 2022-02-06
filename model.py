@@ -323,6 +323,7 @@ class Transformer(nn.Module):
         output_attentions=False,
         output_hidden_states=False,
         return_dict=True,
+        permutation=None,
     ):
         input_ids = input_ids.transpose(0, 1).contiguous()
         qlen, bsz = input_ids.size()
@@ -364,7 +365,10 @@ class Transformer(nn.Module):
 
         hids = []
         attentions = [] if output_attentions else None
-        pos_seq = torch.arange(klen - 1, -1, -1.0, device=word_emb.device, dtype=word_emb.dtype)
+        if permutation == None:
+            pos_seq = torch.arange(klen - 1, -1, -1.0, device=word_emb.device, dtype=word_emb.dtype)
+        else:
+            pos_seq = torch.tensor(permutation, device=word_emb.device, dtype=word_emb.dtype)
         if self.clamp_len > 0:
             pos_seq.clamp_(max=self.clamp_len)
         pos_emb = self.pos_emb(pos_seq)
