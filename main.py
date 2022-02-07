@@ -1,5 +1,6 @@
 import os
 import argparse
+from random import randint
 import preprocess
 import pickle
 from misc import Song, Vocabulary, Checkpoint
@@ -29,6 +30,9 @@ def parse_args():
 
     parser.add_argument('--training-split-ratio', type=int, default=9)
     parser.add_argument('--max-gen-len', type=int, default=4096, help='number of tokens in generation')
+
+    parser.add_argument('--generate-middle', default=False, action='store_true', help='use A-C-B permutation')
+
     return parser.parse_args()
 
 def main():
@@ -52,7 +56,7 @@ def main():
         )
         model = Transformer(config)
         train(model, training_songs, args.epoch_num, args.batch_size, args.seg_size, args.cuda,
-              config, vocab, args.save_path)
+              config, vocab, args.save_path, generate_middle = args.generate_middle)
 
     if args.test:
         ckpt = torch.load(args.ckpt_path)
@@ -74,7 +78,7 @@ def main():
         with torch.no_grad():
             prompt_ids = select_first_n_bar(songs, vocab, 8)
             result_ids = generate(model, prompt_ids,
-                              args.cuda, args.seg_size, vocab, max_gen_len=args.max_gen_len)
+                              args.cuda, args.seg_size, vocab, max_gen_len=args.max_gen_len,generate_middle = args.generate_middle)
 
             for i in range(len(prompt_ids)):
                 song = Song(); song.info_copy(prompt_ids[i])
@@ -195,7 +199,7 @@ def tokenize(data, vocab, split_empty_bar=0):
 
     return songs
 
-def train(model, songs, epoch_num, batch_size, seg_size, cuda, config, vocab, save_path):
+def train(model, songs, epoch_num, batch_size, seg_size, cuda, config, vocab, save_path, generate_middle):
     model.train()
     model = model.cuda() if cuda else model
 
@@ -214,11 +218,72 @@ def train(model, songs, epoch_num, batch_size, seg_size, cuda, config, vocab, sa
     print("set max sequence length to:", f"{max_seq_len},",
           f"including {len(match)} songs of total ({round(len(match)/len(song_lens)*100, 2)}%)")
 
-    # zero padding
+    if generate_middle:
+        # length of generation
+        seg_B_len = 16*16
+        # avoid seg_A and seg_C being too short
+        min_seg_len = 8*16
+        # reordered position sequence
+        #perms = []
+        # mask out loss on seg_A and seg_C
+        loss_masks = []
+
     tokens = []
     for song in songs:
-        tokens.append(song[:max_seq_len] + [0 for i in range(max_seq_len-len(song))])
+        if generate_middle:
+            '''
+            input:       BOS (segment A) Seg_C (segment C) seg_B (segment B) EOS (padding)
+            loss_mask:   [0] ...............................[0]      [1]     [1]    [0]
+            label:       (padding).............................. (segment B) EOS (padding)
+            '''
+            # reserve 2 positions for 'SegB' and 'SegC' token
+            song = song[:max_seq_len-2]
+
+            # randomly pick the position of seg_B
+            try:
+                seg_B_start = randint(min_seg_len,len(song)-min_seg_len-seg_B_len-1)
+            except ValueError:
+                # this song is too short
+                continue
+            seg_C_start = seg_B_start + seg_B_len
+            
+            # split the segments
+            seg_A = song[:seg_B_start]
+            seg_B = song[seg_B_start:seg_C_start]
+            seg_C = song[seg_C_start:-1] # get rid of EOS
+
+            # add 2 segment tokens to separate the 3 segments
+            song = seg_A + [vocab.token_to_id['SegC']] + seg_C + [vocab.token_to_id['SegB']] + seg_B + [vocab.token_to_id['EOS']]
+
+            song = song + [0]* (max_seq_len-len(song))
+            tokens.append(song)
+
+            # rearrange the permutation
+            '''
+            seg_C_start+=1 # 'SegB' token makes seg_B longer by 1 token 
+            orig_perm = list(range(max_seq_len-1,-1,-1))
+            new_perm = orig_perm[:seg_B_start] + orig_perm[seg_C_start:] + orig_perm[seg_B_start:seg_C_start] 
+
+            perms.append(new_perm)
+            '''
+
+            # only take loss of seg_B and EOS
+            seg_B_start_new = len(seg_A)+len(seg_C) + 2
+            seg_B_end_new = seg_B_start_new + seg_B_len
+            loss_mask = [0]*len(song)
+            loss_mask[seg_B_start_new:seg_B_end_new+1] = [1]*(seg_B_len+1) # seg_B and EOS
+
+            loss_masks.append(loss_mask)
+            
+        else:
+            # zero padding
+            tokens.append(song[:max_seq_len] + [0 for i in range(max_seq_len-len(song))])
+
     tokens = torch.tensor(tokens, dtype=int)
+    if generate_middle:
+        print("generate_middle")
+        #perms = torch.tensor(perms, dtype = torch.float)
+        loss_masks = torch.tensor(loss_masks)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 
@@ -229,16 +294,39 @@ def train(model, songs, epoch_num, batch_size, seg_size, cuda, config, vocab, sa
 
         for batch_idx in range(0, len(tokens), batch_size):
             batch = tokens[batch_idx:batch_idx+batch_size]
+            if generate_middle:
+                #perm_batch = perms[batch_idx:batch_idx+batch_size]
+                loss_mask_batch = loss_masks[batch_idx:batch_idx+batch_size]
             mems = None
             for seg_idx in range(0, max_seq_len, seg_size): # split a long sequence into small segments
                 segs = batch[:, seg_idx:seg_idx+seg_size]
                 labels = batch[:, seg_idx+1:seg_idx+seg_size+1]
+                if generate_middle:
+                    #perm_seg = perm_batch[:, seg_idx:seg_idx+seg_size]
+                    loss_mask_seg = loss_mask_batch[:, seg_idx+1:seg_idx+seg_size+1]
+                    # mask out loss of seg_A and seg_C
+                    labels[loss_mask_seg==0] = 0
+
                 if cuda:
                     segs = segs.cuda()
                     labels = labels.cuda()
-
+                    '''
+                    if generate_middle:
+                        perm_seg = perm_seg.cuda()
+                    '''
                 optimizer.zero_grad()
-                output = model(input_ids=segs, mems=mems, labels=labels)
+                if generate_middle:
+                    '''
+                    # the last element of pos_seq should be 0 (?)
+                    for i in range(perm_seg.shape[0]):
+                        perm_seg[i] -= perm_seg[i,-1].clone()
+                    output = model(input_ids=segs, mems=mems, labels=labels, permutation = perm_seg)
+                    '''
+                    output = model(input_ids=segs, mems=mems, labels=labels)
+                    
+                else:
+                    output = model(input_ids=segs, mems=mems, labels=labels)
+
                 output.losses.backward()
                 optimizer.step()
 

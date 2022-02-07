@@ -309,7 +309,7 @@ class Transformer(nn.Module):
 
         self.drop = nn.Dropout(config.dropout)
         self.softmax = nn.Softmax(dim = -1)
-        self.criterion = nn.CrossEntropyLoss(ignore_index=config.padding_idx, reduction="sum")
+        self.criterion = nn.CrossEntropyLoss(ignore_index=config.padding_idx)
 
         self.apply(self._init_weights)
 
