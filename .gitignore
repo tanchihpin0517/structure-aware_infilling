@@ -4,8 +4,10 @@ activate
 test.py
 test/
 dataset/*.pickle
+dataset/*.pickle.small
 trained_model*/
 gen_midi/
 .nfs*
 train.sh
 test.sh
+pop909_test/

@@ -1,5 +1,7 @@
 import torch
 from torch import nn
+from .general import Config, Output, REMIEmbedding, CPEmbedding
+from dataclasses import dataclass
 
 
 class PositionalEmbedding(nn.Module):
@@ -227,64 +229,38 @@ class RelPartialLearnableDecoderLayer(nn.Module):
 
         return outputs
 
+@dataclass
+class TransformerXLConfig(Config):
+    d_head: int = 0
+    xavier: float = False
+    init_std: float = 0.02
 
-class Config:
-    def __init__(
-        self,
-        vocab_size,
-        d_embed = 512,
-        padding_idx = 0,
-        d_model = 512,
-        n_head = 8,
-        #d_head = 32,
-        d_inner = 2048,
-        n_layer = 8,
-        mem_len = 512, #1600,
-        clamp_len = 1000,
-        dropout = 0.1,
-        xavier = False,
-        init_std = 0.02,
-    ):
-        self.vocab_size = vocab_size
-        self.d_embed = d_embed
-        self.padding_idx = padding_idx
-        self.d_model = d_model
-        self.n_head = n_head
-        self.d_head = d_model // n_head
-        self.d_inner = d_inner
-        self.n_layer = n_layer
-        self.mem_len = mem_len
-        self.clamp_len = clamp_len
-        self.dropout = dropout
-        self.xavier = xavier
-        self.init_std = init_std
+    def __post_init__(self):
+        assert self.d_model % self.n_head == 0
+        self.d_head = self.d_model // self.n_head
 
+@dataclass
+class TransformerXLOutput(Output):
+    pass
 
-class Output:
-    def __init__(self, losses=None, last_hidden_states=None, pred_scores=None, mems=None, hidden_states=None, attentions=None):
-        self.losses = losses
-        self.last_hidden_states = last_hidden_states
-        self.pred_scores = pred_scores
-        self.mems = mems
-        self.hidden_states = hidden_states
-        self.attentions = attentions
-
-
-class Transformer(nn.Module):
+class TransformerXL(nn.Module):
     def __init__(self, config):
-        super(Transformer, self).__init__()
+        super(TransformerXL, self).__init__()
 
         self.config = config
         self.n_token = config.vocab_size
-        self.d_embed = config.d_embed
         self.d_model = config.d_model
         self.n_head = config.n_head
         self.d_head = config.d_head
         self.n_layer = config.n_layer
         self.mem_len = config.mem_len
         self.clamp_len = config.clamp_len
+        self.use_cp = config.use_cp
 
-        self.word_emb = nn.Embedding(config.vocab_size, config.d_embed)
+        if config.use_cp:
+            self.word_emb = CPEmbedding(config.vocab_size, config.d_model, config.d_subembed, config.class_ranges)
+        else:
+            self.word_emb = REMIEmbedding(config.vocab_size, config.d_model)
         self.pos_emb = PositionalEmbedding(self.d_model)
         self.r_w_bias = nn.Parameter(torch.FloatTensor(self.n_head, self.d_head))
         self.r_r_bias = nn.Parameter(torch.FloatTensor(self.n_head, self.d_head))
@@ -305,11 +281,11 @@ class Transformer(nn.Module):
                     layer_norm_epsilon=1e-5,
                 )
             )
-        self.trans_layer = nn.Linear(config.d_model, config.vocab_size)
+        #self.trans_layer = nn.Linear(config.d_model, config.vocab_size)
 
         self.drop = nn.Dropout(config.dropout)
         self.softmax = nn.Softmax(dim = -1)
-        self.criterion = nn.CrossEntropyLoss(ignore_index=config.padding_idx, reduction="sum")
+        self.criterion = nn.CrossEntropyLoss(ignore_index=config.ignore_idx, reduction="sum")
 
         self.apply(self._init_weights)
 
@@ -325,7 +301,10 @@ class Transformer(nn.Module):
         return_dict=True,
     ):
         input_ids = input_ids.transpose(0, 1).contiguous()
-        qlen, bsz = input_ids.size()
+        if self.use_cp:
+            qlen, bsz, cls_num = input_ids.size()
+        else:
+            qlen, bsz = input_ids.size()
 
         if mems is None:
             mems = self._init_mems(bsz)
@@ -401,39 +380,24 @@ class Transformer(nn.Module):
             attentions = tuple(t.permute(2, 3, 0, 1).contiguous() for t in attentions)
         # We transpose back here to shape [bsz, len, hidden_dim]
         core_out = core_out.transpose(0, 1).contiguous()
-        scores = self.trans_layer(core_out)
-        pred_scores = self.softmax(scores)
+        scores = self.word_emb.decompose(core_out)
+        pred_scores = [self.softmax(score) for score in scores]
 
         # torch does softmax in CrossEntropyLoss
         if labels is not None:
-            losses = self.criterion(scores[:, :labels.size(1), :].transpose(1,2), labels)
+            assert len(labels) == len(scores)
+            losses = [self.criterion(scores[i][:, :labels[i].size(1), :].transpose(1,2), labels[i]) for i in range(len(labels))]
         else:
             losses = None
 
-        return Output(
+        return TransformerXLOutput(
             losses = losses,
             last_hidden_states = core_out,
             pred_scores = pred_scores,
             mems = new_mems,
-            #hidden_states = hids,
-            #attentions = attentions,
+            hidden_states = hids,
+            attentions = attentions,
         )
-
-    def nucleus(self, scores, p=0.9, k=8):
-        dims = scores.size()
-        pre_size = 1
-        for d in dims[:-1]:
-            pre_size *= d
-
-        t = scores.view(pre_size, dims[-1])
-        t, idx = torch.sort(t, dim=-1, descending=True)
-        not_sel = torch.cumsum(t, dim=-1) >= p
-        not_sel[..., :k] = False # make sure there are at least k candidates
-        t[not_sel] = 0.0
-        choice = torch.multinomial(t, 1) # The rows of input do not need to sum to one
-        real_choice = idx[torch.arange(pre_size), choice.view(-1)]
-
-        return real_choice.view(dims[:-1])
 
     def _init_weights(self, m):
         """Initialize the weights."""
