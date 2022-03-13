@@ -253,8 +253,18 @@ def pop_909_map_func(args):
     #notes = [Note(y, track=track) for x, track in [(melody, "melody")] for y in x.notes]
     notes = sorted(notes, key=lambda note: note.midi.start)
 
+
     note_idx = 0
     events = song.flatten_events()
+
+    # skip notes before the first event
+    while True:
+        onset = notes[note_idx].midi.start
+        if onset < events[0].start:
+            note_idx += 1
+        else:
+            break
+
     for i in range(len(events)):
         while note_idx < len(notes):
             onset = notes[note_idx].midi.start
@@ -314,7 +324,8 @@ def _test_pop909(testdir: str, song_sel: int = None, track_sel=['melody', 'bridg
             f.write(f"{song}\n")
 
 if __name__ == '__main__':
-    song_sel = 70
+    song_sel = 14
+    #song_sel = None
     #track_sel = ['melody', 'bridge', 'piano']
     track_sel = ['melody', 'bridge', 'piano']
     _test_pop909("/screamlab/home/tanch/structural_expansion/pop909_test", song_sel=song_sel, track_sel=track_sel)

@@ -24,9 +24,10 @@ def parse_args():
     parser.add_argument('--vocab-file', type=str, default='dataset/vocab_debug.txt')
     parser.add_argument('--data-file', type=str, default='dataset/pop909.pickle')
     parser.add_argument('--preprocess', default=False, action='store_true')
-    parser.add_argument('--save-path', type=str, default="trained_model/loss_%d.ckpt")
+    parser.add_argument('--save-path', type=str, default=None)
     parser.add_argument('--ckpt-path', type=str, default=None)
-    parser.add_argument('--cp', default=False, action='store_true')
+    parser.add_argument('--no-cp', default=False, action='store_true')
+    parser.add_argument('--gen-num', type=int, default=16)
 
     parser.add_argument('--batch-size', type=int, default=1)
     parser.add_argument('--seg-size', type=int, default=1024)
@@ -46,19 +47,21 @@ def parse_args():
 
 def main():
     args = parse_args()
+    use_cp = (not args.no_cp)
 
     if args.preprocess:
         gen_data(args.data_file, small_size=16)
         exit()
 
     #data = load_data(args.data_file, args.preprocess, melody_only=True, max_song_num=16)
-    #songs_data = load_data(args.data_file, track_sel=['melody', 'bridge'])
     songs_data = load_data(args.data_file, track_sel=['melody', 'bridge'])
-    tokenizer = Tokenizer(args.vocab_file, use_cp=args.cp)
-    song_ids = tokenize(songs_data, tokenizer)
+    #songs_data = load_data(args.data_file, track_sel=['melody', 'bridge', 'piano'])
 
     if args.train:
         utils.check_save_path(args.save_path)
+
+        tokenizer = Tokenizer(args.vocab_file, use_cp=use_cp)
+        song_ids = tokenize(songs_data, tokenizer)
         training_song_ids = song_ids[len(song_ids)*(10-args.training_split_ratio)//10:]
 
         if args.model == "transformer_xl":
@@ -70,7 +73,7 @@ def main():
                 n_layer = args.num_layer,
                 mem_len = args.mem_len,
                 clamp_len = args.mem_len,
-                use_cp=args.cp,
+                use_cp=use_cp,
                 d_subembed=args.dim_subembed,
                 class_ranges=tokenizer.class_ranges()
             )
@@ -122,28 +125,39 @@ def main():
                  args.cuda, args.seg_size, tokenizer)
 
     if args.generate:
+        songs = songs_data[:args.gen_num]
+        ckpt = torch.load(args.ckpt_path)
+        tokenizer = ckpt.tokenizer
+
         if args.model == "transformer_xl":
-            songs = songs[:8]
-            ckpt = torch.load(args.ckpt_path)
             model = TransformerXL(ckpt.config)
             model.load_state_dict(ckpt.model_state_dict)
-            tokenizer = ckpt.tokenizer
-            print("ckpt:", "args.ckpt_path", ", epoch:", ckpt.epoch, ", loss:", ckpt.loss)
+            print("ckpt:", args.ckpt_path, ", epoch:", ckpt.epoch, ", loss:", ckpt.loss)
             with torch.no_grad():
-                prompt_ids = select_first_n_bar(songs, tokenizer, 8)
-                result_ids = generate(model, prompt_ids,
-                                  args.cuda, args.seg_size, tokenizer, max_gen_len=args.max_gen_len)
+                prompts = select_first_n_bar(songs, 8)
+                prompt_ids = tokenize(prompts, tokenizer, with_eos=False)
+                result_ids = generate_transxl(
+                    model,
+                    prompt_ids,
+                    args.cuda,
+                    args.seg_size,
+                    tokenizer,
+                    max_gen_len=args.max_gen_len
+                )
 
+                gen_song_ids = []
                 for i in range(len(prompt_ids)):
-                    song = Song(); song.info_copy(prompt_ids[i])
-                    song.extend(prompt_ids[i] + result_ids[i])
-                    midi_data, text = token_ids_to_midi(song, tokenizer)
-                    save_dir = f"./gen_midi/{math.floor(ckpt.loss*10)/10.0}"
-                    if not os.path.isdir(save_dir):
-                        os.makedirs(save_dir)
-                    midi_data.write(os.path.join(save_dir, f"{song.name}.midi"))
-                    #with open(f"./gen_midi/{song.name}.txt", "w") as f:
-                    #    f.write("\n".join(text))
+                    gen_song_ids.append(prompt_ids[i] + result_ids[i])
+
+            for i in range(len(gen_song_ids)):
+                gen_song = tokenizer.decode(tokenizer.id_to_token(gen_song_ids[i]), Song.copy(prompts[i], with_content=False))
+
+                save_dir = os.path.join(args.save_path, f"{math.floor(ckpt.loss*10)/10.0}")
+                if not os.path.isdir(save_dir):
+                    os.makedirs(save_dir)
+                gen_song.save(os.path.join(save_dir, f"{gen_song.name}.midi"))
+                #with open(f"./gen_midi/{song.name}.txt", "w") as f:
+                #    f.write("\n".join(text))
         elif args.model == 'xlnet':
             songs = songs[:8]
             ckpt = torch.load(args.ckpt_path)
@@ -210,11 +224,11 @@ def load_data(data_file, track_sel=['melody', 'bridge', 'piano'], max_song_num=N
 
     return data
 
-def tokenize(songs_data, tokenizer) -> list:
+def tokenize(songs_data, tokenizer, with_eos=True) -> list:
     songs = []
     pbar = tqdm(desc="Tokenize", total=len(songs_data))
     for song in songs_data:
-        song = tokenizer.encode(song)
+        song = tokenizer.encode(song, with_eos=with_eos)
         song = tokenizer.token_to_id(song)
         songs.append(song)
         pbar.update(1)
@@ -454,103 +468,70 @@ def test(model, song, cuda, seg_size, tokenizer):
             output_ids.append(torch.argmax(output.pred_scores, dim=-1)[0][-1].item())
         print(list(map(lambda i: tokenizer[i], output_ids)))
 
-
-def select_first_n_bar(songs, tokenizer, n_bar):
+def select_first_n_bar(songs, n_bar):
     clipped_songs = []
     for song in songs:
-        bar_count = 0
-        clip = Song(); clip.info_copy(song)
-        for i, token in enumerate(song):
-            if token == tokenizer["Bar(1)"]:
-                if song[i+1] == tokenizer["Bar(1)"]:
-                    continue
-                if bar_count == n_bar:
-                    break
-                bar_count += 1
-            clip.append(token)
-        clipped_songs.append(clip)
+        clipped_songs.append(song.clip(0, n_bar))
     return clipped_songs
 
-def select_n_bar(songs, tokenizer, start, N):
-    clipped_songs = []
-    for song in songs:
-        bar_count = 0
-        clip = Song(); clip.info_copy(song)
-
-        '''
-        skip bars before "start"
-        '''
-        offset = 0
-        for i, token in enumerate(song):
-            if token == tokenizer["Bar(1)"]:
-                if song[i+1] == tokenizer["Bar(1)"]:
-                    continue
-                if bar_count == start:
-                    break
-                bar_count += 1
-            offset = i
-
-        '''
-        copy n bars
-        '''
-        bar_count = 0
-        for i, token in enumerate(song[offset:]):
-            if token == tokenizer["Bar(1)"]:
-                if bar_count == N:
-                    break
-                bar_count += 1
-            clip.append(token)
-        clipped_songs.append(clip)
-    return clipped_songs
-
-def generate(model, prompts, cuda, seg_size, tokenizer, max_gen_len):
+def generate_transxl(model, prompt_ids, cuda, seg_size, tokenizer, max_gen_len):
     model.eval()
     model = model.cuda() if cuda else model
 
     result_ids = []
-    pbar = tqdm(desc="Generating", total=len(prompts))
-    for prompt in prompts:
-        result = Song(); result.info_copy(prompt)
-        prompt = torch.tensor(prompt, dtype=torch.int)
+    pbar = tqdm(desc="Generating", total=len(prompt_ids))
+    for prompt in prompt_ids:
+        result = []
+        prompt = torch.LongTensor(prompt)
         # limit segment length not longer than memory length
         seg_size = model.mem_len if model.mem_len < seg_size else seg_size
 
         """
         generate momery embeddings
         """
+        gen_id = None
         mems = None
-        first_gen_id = None
         for seg_idx in range(0, len(prompt), seg_size): # split a long sequence into small segments
             segs = prompt[None, seg_idx:seg_idx+seg_size]
             segs = segs.cuda() if cuda else segs
 
-            output = model(input_ids=segs, mems=mems)
+            output = model(input_ids=segs, mems=None)
             mems = output.mems
 
-            output_ids = torch.argmax(output.pred_scores, dim=-1)
-            first_gen_id = output_ids[0, -1]
+            #output_ids = torch.argmax(output.pred_scores, dim=-1)
+            while True:
+                output_ids = tokenizer.sample(output.pred_scores)
+                gen_id = output_ids[0, -1]
+                if tokenizer.is_legal(gen_id):
+                    break
+                else:
+                    print("illegal generated id:", tokenizer.id_to_token(gen_id))
+            result.append(gen_id.tolist())
 
         """
         generate new contents
         """
         #output_ids = torch.argmax(output.pred_scores, dim=-1)
-        total_gen_num = 0
-        gen_id = first_gen_id.item()
+        total_gen_num = 1
         while True:
-            segs = torch.tensor(gen_id, dtype=torch.int).view(1,1)
+            segs = gen_id[None, None]
             segs = segs.cuda() if cuda else segs
 
             output = model(input_ids=segs, mems=mems)
             mems = output.mems
 
             #gen_id = torch.argmax(output.pred_scores, dim=-1)[0, -1].item()
-            gen_id = model.nucleus(output.pred_scores)[0, -1].item()
-            total_gen_num += 1
-            #print(tokenizer[gen_id])
-            result.append(gen_id)
-            if tokenizer[gen_id] == "EOS":
+            while True:
+                output_ids = tokenizer.sample(output.pred_scores)
+                gen_id = output_ids[0, -1]
+                if tokenizer.is_legal(gen_id):
+                    break
+                else:
+                    print("illegal generated id:", tokenizer.id_to_token(gen_id))
+            result.append(gen_id.tolist())
+            if tokenizer.is_eos(gen_id):
                 break
-            if not total_gen_num < max_gen_len:
+            if len(result) >= max_gen_len:
                 break
         result_ids.append(result)
         pbar.update(1)

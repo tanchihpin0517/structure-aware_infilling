@@ -1,11 +1,12 @@
 import os
 from typing import List
-from music import Song
+from music import Song, Bar, Event, Note
 from collections.abc import Iterable
 import copy
 import torch
 import numpy as np
 from collections import OrderedDict
+import utils
 
 class Tokenizer:
 
@@ -181,7 +182,7 @@ class Tokenizer:
             self.token_to_id_tabel[token] = i
             self.id_to_token_tabel.append(token)
 
-    def encode(self, song: Song) -> list:
+    def encode(self, song: Song, with_eos=True) -> list:
         # remove empty bars in the begin and end of songs
         start, end = 0, len(song.bars)
         for bar in song.bars:
@@ -193,9 +194,7 @@ class Tokenizer:
                 break
             end -= 1
 
-        song_copy = Song.copy(song)
-        song_copy.bars = song.bars[start:end]
-        song = song_copy
+        song = song.clip(start, end)
 
         if self.use_cp:
             tokens = [[
@@ -253,14 +252,15 @@ class Tokenizer:
                                        struct
                         ])
 
-            tokens.append([self.bar(self.EOS),
-                           self.tempo(self.BAR),
-                           self.pos(self.BAR),
-                           self.pitch(self.BAR),
-                           self.vel(self.BAR),
-                           self.dur(self.BAR),
-                           struct_map[last_struct]
-            ])
+            if with_eos:
+                tokens.append([self.bar(self.EOS),
+                               self.tempo(self.BAR),
+                               self.pos(self.BAR),
+                               self.pitch(self.BAR),
+                               self.vel(self.BAR),
+                               self.dur(self.BAR),
+                               struct_map[last_struct]
+                ])
 
             return tokens
         else:
@@ -295,6 +295,52 @@ class Tokenizer:
             tokens.append(self.bar(self.EOS))
 
             return tokens
+
+    def decode(self, tokens, empty_song: Song) -> Song:
+        assert len(empty_song.bars) == 0
+        song = empty_song
+        event_time = round((60 / song.bpm) / song.beat_division, 8)
+        time_offset = 0.0
+
+        if self.use_cp:
+            # create a bar first
+            #song.bars.append(Bar(struct="None"))
+            #for _ in range(song.beat_per_bar*song.beat_division):
+            #    start = time_offset
+            #    end = time_offset + event_time
+            #    song.bars[-1].events.append(Event(start=start, end=end))
+            #    time_offset += event_time
+            #song.bars[-1].start = song.bars[-1].events[0].start
+            #song.bars[-1].end = song.bars[-1].events[-1].end
+
+            for token in tokens:
+                bar, tempo, pos, pitch, vel, dur, struct = map(self._get_val, token)
+                if bar == self.BOS or bar == self.EOS:
+                    continue
+                elif bar == 1:
+                    # create new bar
+                    song.bars.append(Bar(struct=f"{struct}"))
+                    for _ in range(song.beat_per_bar*song.beat_division):
+                        start = time_offset
+                        end = time_offset + event_time
+                        song.bars[-1].events.append(Event(start=start, end=end, tempo=tempo))
+                        time_offset += event_time
+                    song.bars[-1].start = song.bars[-1].events[0].start
+                    song.bars[-1].end = song.bars[-1].events[-1].end
+                else:
+                    song.bars[-1].events[pos].notes.append(Note(pitch=pitch, velocity=vel, onset=pos, duration=dur))
+
+            return song
+        else:
+            return empty_song
+
+    def _get_val(self, token):
+        val = token.split("(", 1)[1].rsplit(")", 1)[0]
+        try:
+            val = int(val)
+            return val
+        except ValueError:
+            return val
 
     def _fit_range(self, val, start, tick_num, step):
         if val < start:
@@ -379,13 +425,60 @@ class Tokenizer:
             labels: (Batch, Sequence, Class)
             """
             for i, (k, v) in enumerate(self.class_tabel.items()):
-                labels[:, :, i][labels[:, :, i] != self.ignore_idx] -= v[0]
+                range_start = v[0]
+                labels[:, :, i][labels[:, :, i] != self.ignore_idx] -= range_start
 
         if self.use_cp:
             return torch.permute(labels, (2, 0, 1)) # move the class dim to the first
         else:
             return labels[None] # extend 1 dim
-        return labels
+
+    def sample(self, pred_scores):
+        if self.use_cp:
+            tmp = []
+            for i, rng in enumerate(self.class_ranges()):
+                pred_ids = utils.nucleus(pred_scores[i])
+                rng_start = rng[0]
+                pred_ids += rng_start
+                tmp.append(pred_ids)
+            tmp = torch.stack(tmp)
+            perm = [i for i in range(1, len(tmp.shape))]
+            perm.append(0)
+            tmp = torch.permute(tmp, perm) # move the class dim to the last dim
+            return tmp
+        else:
+            pred_ids = utils.nucleus(pred_scores[0])
+            return pred_ids
+
+    def is_eos(self, token):
+        if self.use_cp:
+            t = token[0]
+        else:
+            t = token
+
+        if t == self.bar(self.EOS): # str
+            return True
+        elif self[t] == self.bar(self.EOS):
+            return True
+        else:
+            return False
+
+    def is_legal(self, token):
+        if self.use_cp:
+            if self[token[0]] in [self.bar(self.BOS), self.bar(self.EOS), self.bar(1)]:
+                return (self[token[1]] == self.tempo(self.BAR) and
+                        self[token[2]] == self.pos(self.BAR) and
+                        self[token[3]] == self.pitch(self.BAR) and
+                        self[token[4]] == self.vel(self.BAR) and
+                        self[token[5]] == self.dur(self.BAR))
+            else: # Bar(0)
+                return (self[token[1]] != self.tempo(self.BAR) and
+                        self[token[2]] != self.pos(self.BAR) and
+                        self[token[3]] != self.pitch(self.BAR) and
+                        self[token[4]] != self.vel(self.BAR) and
+                        self[token[5]] != self.dur(self.BAR))
+        else:
+            return True # always legal while not using cp
 
 if __name__ == "__main__":
     pass

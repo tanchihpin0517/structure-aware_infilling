@@ -380,7 +380,7 @@ class TransformerXL(nn.Module):
             attentions = tuple(t.permute(2, 3, 0, 1).contiguous() for t in attentions)
         # We transpose back here to shape [bsz, len, hidden_dim]
         core_out = core_out.transpose(0, 1).contiguous()
-        scores = self.word_emb.decompose(core_out)
+        scores = self.word_emb.decompose(core_out) # (C, B, L, D)
         pred_scores = [self.softmax(score) for score in scores]
 
         # torch does softmax in CrossEntropyLoss

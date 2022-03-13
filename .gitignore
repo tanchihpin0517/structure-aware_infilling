@@ -6,8 +6,9 @@ test/
 dataset/*.pickle
 dataset/*.pickle.small
 trained_model*/
-gen_midi/
+gen_midi*/
 .nfs*
-train.sh
-test.sh
+train*.sh
+test*.sh
+generate*.sh
 pop909_test/

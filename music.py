@@ -2,6 +2,8 @@ from dataclasses import dataclass, field
 import pretty_midi as pmidi
 from typing import List, Optional
 import dataclasses
+import copy
+from copy import deepcopy
 
 @dataclass
 class Note:
@@ -78,8 +80,13 @@ class Song:
     bars: List[Bar] = field(default_factory=list)
 
     @staticmethod
-    def copy(obj):
-        return dataclasses.replace(obj)
+    def copy(song, with_content=True):
+        r = dataclasses.replace(song)
+        if with_content:
+            r.bars = deepcopy(song.bars)
+        else:
+            r.bars = []
+        return r
 
     def __repr__(self):
         s = []
@@ -93,3 +100,33 @@ class Song:
             for event in bar.events:
                 events.append(event)
         return events
+
+    def flatten_notes(self):
+        notes = []
+        for bar in self.bars:
+            for event in bar.events:
+                for note in event.notes:
+                    notes.append(note)
+        return notes
+
+    def clip(self, start, end):
+        r = Song.copy(self, with_content=False)
+        r.bars = deepcopy(self.bars[start:end])
+        return r
+
+    def save(self, file):
+        midi_data = pmidi.PrettyMIDI(initial_tempo=self.bpm)
+        inst = pmidi.Instrument(program=0)
+        for event in self.flatten_events():
+            event_time = event.end - event.start
+            for note in event.notes:
+                midi_note = pmidi.Note(
+                    velocity=note.velocity,
+                    pitch=note.pitch,
+                    start=event.start,
+                    end=event.start+note.duration*event_time
+                )
+                inst.notes.append(midi_note)
+        midi_data.instruments.append(inst)
+        midi_data.write(file)
+

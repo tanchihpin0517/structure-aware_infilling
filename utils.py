@@ -3,7 +3,7 @@ import os
 import shutil
 from datetime import datetime
 
-def nucleus(probs, p=0.9, k=8):
+def nucleus(probs: torch.FloatTensor, p=0.9, k=8):
     dims = probs.size()
     pre_size = 1
     for d in dims[:-1]:
@@ -15,9 +15,9 @@ def nucleus(probs, p=0.9, k=8):
     not_sel[..., :k] = False # make sure there are at least k candidates
     t[not_sel] = 0.0
     choice = torch.multinomial(t, 1) # The rows of input do not need to sum to one
-    real_choice = idx[torch.arange(pre_size), choice.view(-1)]
+    final_choice = idx[torch.arange(pre_size), choice.view(-1)]
 
-    return real_choice.view(dims[:-1])
+    return final_choice.view(dims[:-1])
 
 def check_save_path(save_path):
     save_dir = os.path.dirname(save_path)
