@@ -22,6 +22,9 @@ def nucleus(probs: torch.FloatTensor, p=0.9, k=8):
 def check_save_path(save_path):
     save_dir = os.path.dirname(save_path)
     parent, dir_name = os.path.dirname(save_dir), os.path.basename(save_dir)
+    if not os.path.exists(save_dir):
+        print(f"Create {save_dir} because directory not exist.")
+        os.mkdir(save_dir)
     if len(os.listdir(save_dir)) != 0:
         print(f"Current saving directory: {save_dir}")
         print("Saving directory is not empty, would you like to keep this directory? [y/n/q]: ", end="")

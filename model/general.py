@@ -15,9 +15,11 @@ class Config:
     clamp_len: int = 4096
     ignore_idx: int = -100
     dropout: float = 0.1
+    layer_norm_eps: float = 1e-12
     use_cp: bool = True
     d_subembed: int = 256
     class_ranges: List[tuple] = None
+    infilling: bool = True
 
 @dataclass
 class Checkpoint:
@@ -67,9 +69,10 @@ class CPEmbedding(Embedding):
         self.decoders = nn.ModuleList()
         for rng in class_ranges:
             start, end = rng
-            self.decoders.append(nn.Linear(d_subembed, end-start))
+            #self.decoders.append(nn.Linear(d_subembed, end-start))
+            self.decoders.append(nn.Linear(d_embed, end-start))
         self.trans_forward = nn.Linear(self.class_num*d_subembed, d_embed)
-        self.trans_backward = nn.Linear(d_embed, self.class_num*d_subembed)
+        #self.trans_backward = nn.Linear(d_embed, self.class_num*d_subembed)
 
         self.drop = nn.Dropout(dropout)
 
@@ -94,10 +97,11 @@ class CPEmbedding(Embedding):
             D: dimention
         """
         B, L, D = embed.shape
-        subembed = self.drop(self.trans_backward(embed))
-        subembed = subembed.view(B, L, self.class_num, self.d_subembed)
+        #subembed = self.drop(self.trans_backward(embed))
+        #subembed = subembed.view(B, L, self.class_num, self.d_subembed)
         out = []
         for i, decoder in enumerate(self.decoders):
-            out.append(decoder(subembed[:,:,i,:]))
+            #out.append(decoder(subembed[:,:,i,:]))
+            out.append(decoder(embed))
         return out
 

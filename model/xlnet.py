@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 from dataclasses import dataclass
-from .general import Config, Output
+from .general import Config, Output, REMIEmbedding, CPEmbedding
 
 class XLNetRelativeAttention(nn.Module):
     def __init__(self, config):
@@ -337,50 +337,17 @@ class XLNetLayer(nn.Module):
         output_x = self.ff(output_x)
         return output_x
 
+@dataclass
+class XLNetConfig(Config):
+    attn_type: str = "bi"
+    bi_data: bool = False
+    initializer_range: float = 0.02
+    use_mems_train: bool = True
+    use_mems_eval: bool = True
 
-class XLNetConfig:
-    def __init__(
-        self,
-        vocab_size,
-        padding_idx = 0,
-        d_model = 512,
-        d_inner = 2048,
-        n_layer = 8,
-        n_head = 8,
-        attn_type="bi",
-        bi_data=False,
-        mem_len = 1024, #1600,
-        clamp_len = 1000,
-        dropout = 0.1,
-        layer_norm_eps = 1e-12,
-        initializer_range = 0.02,
-        use_mems_train = True,
-        use_mems_eval = True,
-    ):
-        self.vocab_size = vocab_size
-        self.padding_idx = padding_idx
-        self.d_model = d_model
-        self.d_inner = d_inner
-        self.n_head = n_head
-
-        if d_model % n_head != 0:
-            raise ValueError(
-                f"The hidden size ({d_model}) is not a multiple of the number of attention "
-                f"heads ({n_head}"
-            )
-        self.d_head = d_model // n_head
-
-        self.n_layer = n_layer
-        self.mem_len = mem_len
-        self.clamp_len = clamp_len
-        self.dropout = dropout
-        self.attn_type = attn_type
-        self.bi_data = bi_data
-        self.layer_norm_eps = layer_norm_eps
-        self.initializer_range = initializer_range
-        self.use_mems_train = use_mems_train
-        self.use_mems_eval = use_mems_eval
-
+    def __post_init__(self):
+        assert self.d_model % self.n_head == 0
+        self.d_head = self.d_model // self.n_head
 
 @dataclass
 class XLNetOutput(Output):
@@ -396,15 +363,20 @@ class XLNet(nn.Module):
         self.bi_data = config.bi_data
         self.clamp_len = config.clamp_len
         self.n_layer = config.n_layer
+        self.infilling = config.infilling
 
-        self.word_embedding = nn.Embedding(config.vocab_size, config.d_model)
+        if config.use_cp:
+            self.word_embedding = CPEmbedding(config.vocab_size, config.d_model, config.d_subembed, config.class_ranges)
+        else:
+            self.word_embedding = REMIEmbedding(config.vocab_size, config.d_model)
+
+        ###self.word_embedding = nn.Embedding(config.vocab_size, config.d_model)
         self.mask_emb = nn.Parameter(torch.FloatTensor(1, 1, config.d_model))
         self.layer = nn.ModuleList([XLNetLayer(config) for _ in range(config.n_layer)])
         self.dropout = nn.Dropout(config.dropout)
 
-        self.trans_layer = nn.Linear(config.d_model, config.vocab_size)
         self.softmax = nn.Softmax(dim = -1)
-        self.criterion = nn.CrossEntropyLoss(ignore_index=config.padding_idx, reduction="sum")
+        self.criterion = nn.CrossEntropyLoss(ignore_index=config.ignore_idx, reduction="mean")
 
         # Initialize weights and apply final processing
         self.apply(self._init_weights)
@@ -498,6 +470,12 @@ class XLNet(nn.Module):
 
     @staticmethod
     def positional_embedding(pos_seq, inv_freq, bsz=None):
+        """
+        pos_emb: (L, B, D)
+            L: sequence length
+            B: batch size
+            D: model dimension
+        """
         sinusoid_inp = torch.einsum("i,d->id", pos_seq, inv_freq)
         pos_emb = torch.cat([torch.sin(sinusoid_inp), torch.cos(sinusoid_inp)], dim=-1)
         pos_emb = pos_emb[:, None, :]
@@ -566,9 +544,22 @@ class XLNet(nn.Module):
         head_mask=None,
         inputs_embeds=None,
         use_mems=None,
-        output_attentions=None,
-        output_hidden_states=None,
+        output_attentions=False,
+        output_hidden_states=False,
     ):
+        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_hidden_states = (
+            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        )
+        ###return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        ###if "use_cache" in kwargs:
+        ###    warnings.warn(
+        ###        "The `use_cache` argument is deprecated and will be removed in a future version, use `use_mems` instead.",
+        ###        FutureWarning,
+        ###    )
+        ###    use_mems = kwargs["use_cache"]
+
         if self.training:
             use_mems = use_mems if use_mems is not None else self.config.use_mems_train
         else:
@@ -588,6 +579,7 @@ class XLNet(nn.Module):
         else:
             raise ValueError("You have to specify either input_ids or inputs_embeds")
 
+        ###token_type_ids = token_type_ids.transpose(0, 1).contiguous() if token_type_ids is not None else None
         input_mask = input_mask.transpose(0, 1).contiguous() if input_mask is not None else None
         attention_mask = attention_mask.transpose(0, 1).contiguous() if attention_mask is not None else None
         perm_mask = perm_mask.permute(1, 2, 0).contiguous() if perm_mask is not None else None
@@ -659,6 +651,21 @@ class XLNet(nn.Module):
         else:
             output_g = None
 
+        #### Segment embedding
+        ###if token_type_ids is not None:
+        ###    # Convert `token_type_ids` to one-hot `seg_mat`
+        ###    if mlen > 0:
+        ###        mem_pad = torch.zeros([mlen, bsz], dtype=torch.long, device=device)
+        ###        cat_ids = torch.cat([mem_pad, token_type_ids], dim=0)
+        ###    else:
+        ###        cat_ids = token_type_ids
+
+        ###    # `1` indicates not in the same segment [qlen x klen x bsz]
+        ###    seg_mat = (token_type_ids[:, None] != cat_ids[None, :]).long()
+        ###    seg_mat = nn.functional.one_hot(seg_mat, num_classes=2).to(dtype_float)
+        ###else:
+        ###    seg_mat = None
+
         # Positional encoding
         pos_emb = self.relative_positional_encoding(qlen, klen, bsz=bsz)
         pos_emb = self.dropout(pos_emb)
@@ -699,6 +706,7 @@ class XLNet(nn.Module):
                 attn_mask_h=non_tgt_mask,
                 attn_mask_g=attn_mask,
                 r=pos_emb,
+                ###seg_mat=seg_mat,
                 seg_mat=None,
                 mems=mems[i],
                 target_mapping=target_mapping,
@@ -717,13 +725,6 @@ class XLNet(nn.Module):
 
         # Prepare outputs, we transpose back here to shape [bsz, len, hidden_dim] (cf. beginning of forward() method)
         output = output.permute(1, 0, 2).contiguous()
-        scores = self.trans_layer(output)
-        pred_scores = self.softmax(scores)
-
-        if labels is not None:
-            losses = self.criterion(scores[:, :labels.size(1), :].transpose(1,2), labels)
-        else:
-            losses = None
 
         if not use_mems:
             new_mems = None
@@ -743,6 +744,22 @@ class XLNet(nn.Module):
             else:
                 attentions = tuple(t.permute(2, 3, 0, 1).contiguous() for t in attentions)
 
+        ###if not return_dict:
+        ###    return tuple(v for v in [output, new_mems, hidden_states, attentions] if v is not None)
+
+        """
+        output: (num_predict, batch_size, hidden_size)
+        """
+        scores = self.word_embedding.decompose(output) # to (C, B, P, D)
+        pred_scores = [self.softmax(score) for score in scores]
+
+        if labels is not None:
+            assert len(labels) == len(scores)
+            #losses = [self.criterion(scores[i][:, :labels[i].size(1), :].transpose(1,2), labels[i]) for i in range(len(labels))]
+            losses = [self.criterion(scores[i].transpose(1,2), labels[i]) for i in range(len(labels))]
+        else:
+            losses = None
+
         return XLNetOutput(
             losses = losses,
             last_hidden_states=output,
@@ -751,3 +768,69 @@ class XLNet(nn.Module):
             hidden_states=hidden_states,
             attentions=attentions
         )
+
+    def gen_mask_and_target(self, songs, max_seq_len, B_start, B_end, only_middle=False):
+        """
+        songs(padded): (N, L)
+
+        infilling: [A, B, C] -> [A, C, B]
+        mask: 0 -> attend, 1 -> not attend
+        """
+
+        if self.infilling:
+            #B_start, B_end = max_seq_len//3*1, max_seq_len//3*2 # [B_start, B_end)
+            A_len, B_len, C_len = B_start, B_end-B_start, max_seq_len-B_end
+
+            mask = torch.zeros(max_seq_len, max_seq_len)
+
+            # part A
+            mask_a = torch.triu(torch.ones((A_len, A_len)))
+            mask[:B_start, :B_start] += mask_a
+            mask[:B_start, B_start:] += 1.0
+
+            # part C
+            mask_c = torch.triu(torch.ones((C_len, C_len)))
+            mask[B_end:, B_end:] += mask_c
+            mask[B_end:, B_start:B_end] += 1.0
+
+            # part B
+            mask_b = torch.triu(torch.ones((B_len, B_len)))
+            mask[B_start:B_end, B_start:B_end] += mask_b
+
+            mask = (mask > 0)[None, :, :].expand(len(songs), -1, -1).to(torch.float)
+
+            mapping = torch.eye(max_seq_len, max_seq_len)[None, :, :].expand(len(songs), -1, -1).to(torch.float)
+
+            if only_middle:
+                label = torch.zeros(songs.shape).to(torch.long)
+                label[:, B_start:B_end] = songs[:, B_start:B_end]
+            else:
+                label = torch.zeros(songs.shape).to(torch.long)
+                label[:, :B_end] = songs[:, :B_end]
+                #label = songs.clone().detach()
+            label[:, 0] = 0
+        else:
+            """
+            for in order generation
+
+            mask:
+                [
+                    ...
+                    [1, 1, 1, 1, ...],
+                    [0, 1, 1, 1, ...],
+                    [0, 0, 1, 1, ...]
+                    ...
+                ]
+            the diagonal is 1 because XLNet needs to mask target in query stream (embedding g)
+            in `forward`, `non_tgt_mask` is used to disable the mask of target in content stream (embedding h)
+            """
+            mask =  torch.triu(torch.ones((max_seq_len, max_seq_len)))[None, :, :].expand(len(songs), -1, -1)
+            mapping = torch.eye(max_seq_len, max_seq_len)[None, :, :].expand(len(songs), -1, -1).to(torch.float)
+            """
+            The first token is BOS, which should not be calculated while computing loss (it doesn't make sense to generate
+            a meaningful output if everything is masked). So it's replaced by 0 (PAD) for label.
+            """
+            label = songs.clone().detach()
+            label[:, 0] = 0
+
+        return mask, mapping, label

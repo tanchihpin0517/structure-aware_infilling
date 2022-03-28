@@ -14,6 +14,8 @@ class Tokenizer:
     MASK = "MASK"
     BOS = "BOS"
     EOS = "EOS"
+    BOP = "BOP"
+    EOP = "EOP"
     BAR = "Bar"
     TEMPO = "Tempo"
     POSITION = "Position"
@@ -124,6 +126,8 @@ class Tokenizer:
             self.MASK,
             self.BOS,
             self.EOS,
+            self.BOP,
+            self.EOP,
         ]
         tokens = tokens + ["RESERVED"] * (10 - len(tokens))
 
@@ -157,12 +161,12 @@ class Tokenizer:
         tokens.extend(pitch)
         offset = len(tokens)
 
-        vel.extend([self.vel(self.BAR)])
-        #vel.extend([self.vel(v) for v in [self.BAR, self.BOS, self.EOS]])
-        vel.extend([self.vel(v) for v in range(0, 33*4, 4)])
-        self.class_tabel[self.VELOCITY] = (offset, offset+len(vel))
-        tokens.extend(vel)
-        offset = len(tokens)
+        #vel.extend([self.vel(self.BAR)])
+        ##vel.extend([self.vel(v) for v in [self.BAR, self.BOS, self.EOS]])
+        #vel.extend([self.vel(v) for v in range(0, 33*4, 4)])
+        #self.class_tabel[self.VELOCITY] = (offset, offset+len(vel))
+        #tokens.extend(vel)
+        #offset = len(tokens)
 
         dur.extend([self.dur(self.BAR)])
         #dur.extend([self.dur(d) for d in [self.BAR, self.BOS, self.EOS]])
@@ -202,7 +206,7 @@ class Tokenizer:
                 self.tempo(self.BAR),
                 self.pos(self.BAR),
                 self.pitch(self.BAR),
-                self.vel(self.BAR),
+                #self.vel(self.BAR),
                 self.dur(self.BAR),
                 self.struct(self.NONE)
             ]]
@@ -228,7 +232,7 @@ class Tokenizer:
                                self.tempo(self.BAR),
                                self.pos(self.BAR),
                                self.pitch(self.BAR),
-                               self.vel(self.BAR),
+                               #self.vel(self.BAR),
                                self.dur(self.BAR),
                                struct
                 ])
@@ -247,7 +251,7 @@ class Tokenizer:
                                        self.tempo(tempo),
                                        self.pos(pos),
                                        self.pitch(pitch),
-                                       self.vel(vel),
+                                       #self.vel(vel),
                                        self.dur(dur),
                                        struct
                         ])
@@ -257,7 +261,7 @@ class Tokenizer:
                                self.tempo(self.BAR),
                                self.pos(self.BAR),
                                self.pitch(self.BAR),
-                               self.vel(self.BAR),
+                               #self.vel(self.BAR),
                                self.dur(self.BAR),
                                struct_map[last_struct]
                 ])
@@ -270,16 +274,19 @@ class Tokenizer:
             last_struct = None
 
             for bar in song.bars:
+                # bar
+                tokens.append(self.bar(1))
+
                 # struct
                 if bar.struct is not None and bar.struct != last_struct:
                     last_struct = bar.struct
                     if bar.struct not in struct_map:
                         struct_map[bar.struct] = self.struct(struct_count)
                         struct_count += 1
+                if bar.struct is None:
+                    tokens.append(self.struct(self.NONE))
+                else:
                     tokens.append(struct_map[bar.struct])
-
-                # bar
-                tokens.append(self.bar(1))
 
                 # note
                 for event in bar.events:
@@ -291,8 +298,15 @@ class Tokenizer:
                         dur = note.duration
                         if dur > self.max_dur:
                             dur = self.max_dur
-                        tokens.extend([self.tempo(tempo), self.pos(pos), self.pitch(pitch), self.vel(vel), self.dur(dur)])
-            tokens.append(self.bar(self.EOS))
+                        tokens.extend([
+                            self.tempo(tempo),
+                            self.pos(pos),
+                            self.pitch(pitch),
+                            #self.vel(vel),
+                            self.dur(dur),
+                        ])
+            if with_eos:
+                tokens.append(self.bar(self.EOS))
 
             return tokens
 
@@ -314,12 +328,16 @@ class Tokenizer:
             #song.bars[-1].end = song.bars[-1].events[-1].end
 
             for token in tokens:
-                bar, tempo, pos, pitch, vel, dur, struct = map(self._get_val, token)
+                #bar, tempo, pos, pitch, vel, dur, struct = [val for tag, val in map(self._get_tag_and_val, token)]
+                bar, tempo, pos, pitch, dur, struct = [val for tag, val in map(self._get_tag_and_val, token)]
                 if bar == self.BOS or bar == self.EOS:
                     continue
                 elif bar == 1:
                     # create new bar
-                    song.bars.append(Bar(struct=f"{struct}"))
+                    song.bars.append(Bar(struct=None))
+                    if struct != self.NONE:
+                        song.bars[-1].struct = f"{struct}"
+
                     for _ in range(song.beat_per_bar*song.beat_division):
                         start = time_offset
                         end = time_offset + event_time
@@ -328,19 +346,56 @@ class Tokenizer:
                     song.bars[-1].start = song.bars[-1].events[0].start
                     song.bars[-1].end = song.bars[-1].events[-1].end
                 else:
-                    song.bars[-1].events[pos].notes.append(Note(pitch=pitch, velocity=vel, onset=pos, duration=dur))
+                    #song.bars[-1].events[pos].notes.append(Note(pitch=pitch, velocity=vel, onset=pos, duration=dur))
+                    song.bars[-1].events[pos].notes.append(Note(pitch=pitch, onset=pos, duration=dur))
 
             return song
         else:
-            return empty_song
+            for token in tokens:
+                tag, val = self._get_tag_and_val(token)
+                if val == self.BOS or val == self.EOS:
+                    continue
+                elif tag == self.BAR:
+                    song.bars.append(Bar(struct=None))
+                    for _ in range(song.beat_per_bar*song.beat_division):
+                        start = time_offset
+                        end = time_offset + event_time
+                        song.bars[-1].events.append(Event(start=start, end=end))
+                        time_offset += event_time
+                    song.bars[-1].start = song.bars[-1].events[0].start
+                    song.bars[-1].end = song.bars[-1].events[-1].end
+                elif tag == self.TEMPO:
+                    tempo = val
+                elif tag == self.POSITION:
+                    pos = val
+                elif tag == self.PITCH:
+                    pitch = val
+                elif tag == self.VELOCITY:
+                    vel = val
+                elif tag == self.DURATION:
+                    try:
+                        dur = val
+                        #note = Note(pitch=pitch, velocity=vel, onset=pos, duration=dur)
+                        note = Note(pitch=pitch, onset=pos, duration=dur)
+                        song.bars[-1].events[pos].tempo = tempo
+                        song.bars[-1].events[pos].notes.append(note)
+                    except UnboundLocalError as e:
+                        print(f"song {song.name}:", e)
+                elif tag == self.STRUCT:
+                    struct = val
+                    if struct != self.NONE:
+                        song.bars[-1].struct = str(struct)
 
-    def _get_val(self, token):
+            return song
+
+    def _get_tag_and_val(self, token):
+        tag = token.split("(", 1)[0]
         val = token.split("(", 1)[1].rsplit(")", 1)[0]
         try:
             val = int(val)
-            return val
+            return tag, val
         except ValueError:
-            return val
+            return tag, val
 
     def _fit_range(self, val, start, tick_num, step):
         if val < start:
@@ -366,7 +421,7 @@ class Tokenizer:
                 token[i] = self[item]
 
     def id_to_token(self, tid):
-        assert isinstance(tid, (list, torch.Tensor, np.ndarray))
+        assert isinstance(tid, (list, torch.Tensor, np.ndarray)), f"{type(tid)} is not allowed."
 
         if isinstance(tid, (torch.Tensor, np.ndarray)):
             tid = tid.tolist()
@@ -398,6 +453,9 @@ class Tokenizer:
         return list(self.class_tabel.values())
 
     def pad(self, songs, val, max_seq_len):
+        """
+        attention mask: 0 -> not attend, 1 -> attend
+        """
         tokens = []
         masks = []
         for song in songs:
@@ -469,14 +527,14 @@ class Tokenizer:
                 return (self[token[1]] == self.tempo(self.BAR) and
                         self[token[2]] == self.pos(self.BAR) and
                         self[token[3]] == self.pitch(self.BAR) and
-                        self[token[4]] == self.vel(self.BAR) and
-                        self[token[5]] == self.dur(self.BAR))
+                        #self[token[4]] == self.vel(self.BAR) and
+                        self[token[4]] == self.dur(self.BAR))
             else: # Bar(0)
                 return (self[token[1]] != self.tempo(self.BAR) and
                         self[token[2]] != self.pos(self.BAR) and
                         self[token[3]] != self.pitch(self.BAR) and
-                        self[token[4]] != self.vel(self.BAR) and
-                        self[token[5]] != self.dur(self.BAR))
+                        #self[token[4]] != self.vel(self.BAR) and
+                        self[token[4]] != self.dur(self.BAR))
         else:
             return True # always legal while not using cp
 

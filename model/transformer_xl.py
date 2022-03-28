@@ -256,11 +256,16 @@ class TransformerXL(nn.Module):
         self.mem_len = config.mem_len
         self.clamp_len = config.clamp_len
         self.use_cp = config.use_cp
+        self.infilling = config.infilling
 
         if config.use_cp:
             self.word_emb = CPEmbedding(config.vocab_size, config.d_model, config.d_subembed, config.class_ranges)
         else:
             self.word_emb = REMIEmbedding(config.vocab_size, config.d_model)
+
+        if config.infilling:
+            self.seg_embed
+
         self.pos_emb = PositionalEmbedding(self.d_model)
         self.r_w_bias = nn.Parameter(torch.FloatTensor(self.n_head, self.d_head))
         self.r_r_bias = nn.Parameter(torch.FloatTensor(self.n_head, self.d_head))
@@ -285,7 +290,7 @@ class TransformerXL(nn.Module):
 
         self.drop = nn.Dropout(config.dropout)
         self.softmax = nn.Softmax(dim = -1)
-        self.criterion = nn.CrossEntropyLoss(ignore_index=config.ignore_idx, reduction="sum")
+        self.criterion = nn.CrossEntropyLoss(ignore_index=config.ignore_idx, reduction="mean")
 
         self.apply(self._init_weights)
 
@@ -479,3 +484,7 @@ class TransformerXL(nn.Module):
                 new_mems.append(cat[beg_idx:end_idx].detach())
 
         return new_mems
+
+    def permute(self, song_ids, max_gen_len, B_start, B_end, tokenizer):
+        for song in song_ids:
+            ...

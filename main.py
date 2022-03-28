@@ -13,6 +13,8 @@ import numpy as np
 import math
 import pretty_midi
 from model.general import Checkpoint
+import random
+import multiprocessing as mp
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -28,10 +30,15 @@ def parse_args():
     parser.add_argument('--ckpt-path', type=str, default=None)
     parser.add_argument('--no-cp', default=False, action='store_true')
     parser.add_argument('--gen-num', type=int, default=16)
+    parser.add_argument('--infilling', default=False, action='store_true')
 
     parser.add_argument('--batch-size', type=int, default=1)
     parser.add_argument('--seg-size', type=int, default=1024)
     parser.add_argument('--epoch-num', type=int, default=1, help='number of training epochs')
+    parser.add_argument('--accm-step', type=int, default=1)
+    parser.add_argument('--max-seq-len', type=int, default=None)
+    parser.add_argument('--only-middle', default=False, action='store_true')
+    parser.add_argument('--seed', type=int, default=0)
 
     # model configuration
     parser.add_argument('--dim-model', type=int, default=512)
@@ -48,6 +55,10 @@ def parse_args():
 def main():
     args = parse_args()
     use_cp = (not args.no_cp)
+
+    torch.manual_seed(args.seed)
+    random.seed(args.seed)
+    np.random.seed(args.seed)
 
     if args.preprocess:
         gen_data(args.data_file, small_size=16)
@@ -68,14 +79,15 @@ def main():
             config = TransformerXLConfig(
                 tokenizer.vocab_size(),
                 d_model = args.dim_model,
-                n_head = args.num_head,
                 d_inner = args.dim_inner,
+                n_head = args.num_head,
                 n_layer = args.num_layer,
                 mem_len = args.mem_len,
                 clamp_len = args.mem_len,
                 use_cp=use_cp,
                 d_subembed=args.dim_subembed,
-                class_ranges=tokenizer.class_ranges()
+                class_ranges=tokenizer.class_ranges(),
+                infilling=args.infilling,
             )
             model = TransformerXL(config)
             train_transxl(
@@ -97,12 +109,17 @@ def main():
                 n_head = args.num_head,
                 n_layer = args.num_layer,
                 mem_len = args.mem_len,
+                clamp_len = args.mem_len,
+                use_cp=use_cp,
+                d_subembed=args.dim_subembed,
+                class_ranges=tokenizer.class_ranges(),
                 attn_type="bi",
+                infilling=args.infilling,
             )
             model = XLNet(config)
             train_xlnet(
                 model,
-                training_songs,
+                training_song_ids,
                 args.epoch_num,
                 args.batch_size,
                 args.seg_size,
@@ -110,6 +127,9 @@ def main():
                 config,
                 tokenizer,
                 args.save_path,
+                accm_step=args.accm_step,
+                max_seq_len=args.max_seq_len,
+                only_middle=args.only_middle,
             )
         else:
             raise Exception(f"Unknow model type: {args.model}")
@@ -134,7 +154,7 @@ def main():
             model.load_state_dict(ckpt.model_state_dict)
             print("ckpt:", args.ckpt_path, ", epoch:", ckpt.epoch, ", loss:", ckpt.loss)
             with torch.no_grad():
-                prompts = select_first_n_bar(songs, 8)
+                prompts = select_bars(songs, 0, 8)
                 prompt_ids = tokenize(prompts, tokenizer, with_eos=False)
                 result_ids = generate_transxl(
                     model,
@@ -150,39 +170,45 @@ def main():
                     gen_song_ids.append(prompt_ids[i] + result_ids[i])
 
             for i in range(len(gen_song_ids)):
-                gen_song = tokenizer.decode(tokenizer.id_to_token(gen_song_ids[i]), Song.copy(prompts[i], with_content=False))
+                gen_song = tokenizer.decode(tokenizer.id_to_token(gen_song_ids[i]), Song.copy(songs[i], with_content=False))
 
                 save_dir = os.path.join(args.save_path, f"{math.floor(ckpt.loss*10)/10.0}")
                 if not os.path.isdir(save_dir):
                     os.makedirs(save_dir)
                 gen_song.save(os.path.join(save_dir, f"{gen_song.name}.midi"))
+                gen_song.save_fig(os.path.join(save_dir, f"{gen_song.name}.png"))
                 #with open(f"./gen_midi/{song.name}.txt", "w") as f:
                 #    f.write("\n".join(text))
         elif args.model == 'xlnet':
-            songs = songs[:8]
-            ckpt = torch.load(args.ckpt_path)
             model = XLNet(ckpt.config)
             model.load_state_dict(ckpt.model_state_dict)
-            tokenizer = ckpt.vocab
             print("ckpt:", "args.ckpt_path", ", epoch:", ckpt.epoch, ", loss:", ckpt.loss)
             with torch.no_grad():
-                prompts_past = select_n_bar(songs, tokenizer, 0, 8)
-                prompts_future = select_n_bar(songs, tokenizer, 21, 8)
-                result_ids = generate_xlnet(model, prompts_past, prompts_future, len(prompts_past[0])+len(prompts_future[0])+64,
-                                  args.cuda, args.seg_size, tokenizer)
+                prompts_past = tokenize(select_bars(songs, 0, 8), tokenizer, with_eos=False)
+                #prompts_future = select_bars(songs, 24, 32)
+                prompts_future = [ [] for _ in range(len(prompts_past))]
+                result_ids = generate_xlnet(
+                    model,
+                    prompts_past,
+                    prompts_future,
+                    args.max_gen_len,
+                    args.cuda,
+                    args.seg_size,
+                    tokenizer
+                )
 
-                '''
-                for i in range(len(prompt_ids)):
-                    song = Song(); song.info_copy(prompt_ids[i])
-                    song.extend(prompt_ids[i] + result_ids[i])
-                    midi_data, text = token_ids_to_midi(song, tokenizer)
-                    save_dir = f"./gen_midi/{math.floor(ckpt.loss*10)/10.0}"
-                    if not os.path.isdir(save_dir):
-                        os.makedirs(save_dir)
-                    midi_data.write(os.path.join(save_dir, f"{song.name}.midi"))
-                    #with open(f"./gen_midi/{song.name}.txt", "w") as f:
-                    #    f.write("\n".join(text))
-                '''
+                gen_song_ids = []
+                for i in range(len(prompts_past)):
+                    gen_song_ids.append(prompts_past[i] + result_ids[i] + prompts_future[i])
+
+            for i in range(len(gen_song_ids)):
+                gen_song = tokenizer.decode(tokenizer.id_to_token(gen_song_ids[i]), Song.copy(songs[i], with_content=False))
+
+                save_dir = os.path.join(args.save_path, f"{math.floor(ckpt.loss*10)/10.0}")
+                if not os.path.isdir(save_dir):
+                    os.makedirs(save_dir)
+                gen_song.save(os.path.join(save_dir, f"{gen_song.name}.midi"))
+                gen_song.save_fig(os.path.join(save_dir, f"{gen_song.name}.png"))
         else:
             raise Exception(f"Unknow model type: {args.model}")
 
@@ -226,15 +252,25 @@ def load_data(data_file, track_sel=['melody', 'bridge', 'piano'], max_song_num=N
 
 def tokenize(songs_data, tokenizer, with_eos=True) -> list:
     songs = []
-    pbar = tqdm(desc="Tokenize", total=len(songs_data))
-    for song in songs_data:
-        song = tokenizer.encode(song, with_eos=with_eos)
-        song = tokenizer.token_to_id(song)
-        songs.append(song)
-        pbar.update(1)
-    pbar.close()
+
+    with mp.Pool() as pool:
+        map_args = []
+        for song in songs_data:
+            map_args.append((song, tokenizer, with_eos))
+
+        pbar = tqdm(desc="Tokenize", total=len(songs_data))
+        for song in pool.imap(tokenize_map, map_args):
+            songs.append(song)
+            pbar.update(1)
+        pbar.close()
 
     return songs
+
+def tokenize_map(args):
+    song, tokenizer, with_eos = args
+    song = tokenizer.encode(song, with_eos=with_eos)
+    song = tokenizer.token_to_id(song)
+    return song
 
 def get_max_seq_len(songs, verbose=True):
     song_lens = np.array(list(map(lambda s: len(s), songs)))
@@ -274,19 +310,28 @@ def save_ckpt(save_path, epoch_idx, config, model, optimizer, loss, tokenizer):
     if ckpt.loss < 1:
         torch.save(ckpt, save_path.replace("%d", str(math.floor(ckpt.loss*10))))
 
-def default_optimizer(model):
-    return torch.optim.Adam(model.parameters(), lr=1e-4)
+def default_optimizer(model, lr=1e-3):
+    return torch.optim.Adam(model.parameters(), lr=lr)
 
-def train_transxl(model, songs, epoch_num, batch_size, seg_size, cuda, config, tokenizer, save_path):
+def default_scheduler(optimizer, lr_max=1.0, lr_min=1.0, T=10, warmup=0, refine=50):
+    #lr_lambda = lambda epoch: 2 if epoch < 10 else 1
+    lr_lambda = lambda epoch: (epoch+1)/warmup if epoch < warmup else \
+                              lr_min + 0.5*(lr_max-lr_min)*(1.0+math.cos(epoch/T*math.pi)) if epoch < refine else lr_min
+    return torch.optim.lr_scheduler.LambdaLR(optimizer=optimizer, lr_lambda=lr_lambda)
+
+def train_transxl(model, song_ids, epoch_num, batch_size, seg_size, cuda, config, tokenizer, save_path, accm_step=1, max_seq_len=None, only_middle=False):
     model.train()
     model = model.cuda() if cuda else model
 
     """
     To reduce training time, we set the max sequence length to (mean + 2*standard_deviation)
     """
-    max_seq_len = get_max_seq_len(songs)
+    if max_seq_len is None:
+        max_seq_len = get_max_seq_len(song_ids)
+    else:
+        print(f"max sequence length is set to {max_seq_len}")
 
-    songs, _ = tokenizer.pad(songs, 0, max_seq_len)
+    song_ids, _ = tokenizer.pad(song_ids, 0, max_seq_len)
 
     """
     if use_cp:
@@ -294,134 +339,119 @@ def train_transxl(model, songs, epoch_num, batch_size, seg_size, cuda, config, t
     else:
         labels: (1, B, L)
     """
-    labels = tokenizer.get_labels(songs)
+    labels = tokenizer.get_labels(song_ids)
 
-    optimizer = default_optimizer(model)
+    optimizer = default_optimizer(model, lr=1e-4)
+    scheduler = default_scheduler(optimizer, lr_max=2.0, lr_min=1.0, T=10, warmup=10)
 
     for epoch_idx in range(epoch_num):
-        pbar = tqdm(desc=f"epoch {epoch_idx+1}", total=len(songs))
+        pbar = tqdm(desc=f"epoch {epoch_idx+1}", total=len(song_ids))
         running_loss = 0.0
         n_tokens = 0
 
-        for batch_idx in range(0, len(songs), batch_size):
-            batch = songs[batch_idx:batch_idx+batch_size]
+        for batch_step, batch_idx in enumerate(range(0, len(song_ids), batch_size)):
+            batch = song_ids[batch_idx:batch_idx+batch_size]
             mems = None
             for seg_idx in range(0, max_seq_len, seg_size): # split a long sequence into small segments
-                songs_batch = songs[batch_idx:batch_idx+batch_size, seg_idx:seg_idx+seg_size]
+                songs_batch = song_ids[batch_idx:batch_idx+batch_size, seg_idx:seg_idx+seg_size]
                 labels_batch = labels[:, batch_idx:batch_idx+batch_size, seg_idx+1:seg_idx+seg_size+1]
                 if cuda:
                     songs_batch = songs_batch.cuda()
                     labels_batch = labels_batch.cuda()
 
-                optimizer.zero_grad()
                 output = model(input_ids=songs_batch, mems=mems, labels=labels_batch)
-                loss = torch.sum(torch.stack(output.losses, dim=0))
+                loss = torch.mean(torch.stack(output.losses, dim=0))
                 loss.backward()
-                optimizer.step()
 
                 mems = output.mems
-                running_loss += loss.item()
-                n_tokens += len(songs_batch[songs_batch != 0])
+
+                n = len(labels[labels != tokenizer.ignore_idx])
+                running_loss += loss.item() * n
+                n_tokens += n
+
+            if (batch_step+1) % accm_step == 0:
+                optimizer.step()
+                optimizer.zero_grad()
 
             pbar.update(len(batch))
         pbar.close()
-        #running_loss /= ((len(songs) / batch_size) * (max_seq_len / seg_size))
+
         running_loss = running_loss / n_tokens
-        print(" "*4, "average loss:", running_loss, "\n")
+        print(" "*4, "average loss:", running_loss, " "*4, "learning rate:", scheduler.get_last_lr()[0], "\n")
+        scheduler.step()
 
         save_ckpt(save_path, epoch_idx, config, model, optimizer, running_loss, tokenizer)
 
-def train_xlnet(model, songs, epoch_num, batch_size, seg_size, cuda, config, tokenizer, save_path):
+def train_xlnet(model, song_ids, epoch_num, batch_size, seg_size, cuda, config, tokenizer, save_path, accm_step=1, max_seq_len=None, only_middle=False):
     model.train()
     model = model.cuda() if cuda else model
 
     """
     To reduce training time, we set the max sequence length to (mean + 2*standard_deviation)
     """
-    max_seq_len = get_max_seq_len(songs)
+    if max_seq_len is None:
+        max_seq_len = get_max_seq_len(song_ids)
+    else:
+        print(f"max sequence length is set to {max_seq_len}")
 
     # attention mask: 0 -> not attend, 1 -> attend
-    songs, attention_masks = to_tensor_with_zero_padding(songs, max_seq_len)
+    song_ids, attention_masks = tokenizer.pad(song_ids, 0, max_seq_len)
 
     # permutation mask: 0 -> attend, 1 -> not attend
-    permutation_masks, target_mappings, tgt_labels = gen_permutation_mask_and_target(songs, max_seq_len, max_seq_len//3, max_seq_len//3*2)
+    permutation_masks, tgt_mappings, tgt_labels = model.gen_mask_and_target(song_ids, max_seq_len, max_seq_len//3, max_seq_len//3*2, only_middle=only_middle)
+    tgt_labels = tokenizer.get_labels(tgt_labels)
 
-    optimizer = default_optimizer(model)
+    optimizer = default_optimizer(model, lr=1e-4)
+    scheduler = default_scheduler(optimizer, lr_max=2.0, lr_min=1.0, T=10, warmup=10)
 
     for epoch_idx in range(epoch_num):
-        pbar = tqdm(desc=f"epoch {epoch_idx+1}", total=len(songs))
+        pbar = tqdm(desc=f"epoch {epoch_idx+1}", total=len(song_ids))
         running_loss = 0.0
         n_tokens = 0
 
-        for batch_idx in range(0, len(songs), batch_size):
+        for batch_step, batch_idx in enumerate(range(0, len(song_ids), batch_size)):
             bs, be = batch_idx, batch_idx+batch_size
             mems = None
 
-            for seg_idx in range(0, max_seq_len, seg_size): # split a long sequence into small segments
+            # split a long sequence into small segments
+            for _, seg_idx in enumerate(range(0, max_seq_len, seg_size)):
                 ss, se = seg_idx, seg_idx+seg_size
 
-                segs = songs[bs:be, ss:se].to(model.device)
-                labels = tgt_labels[bs:be, ss:se].to(model.device)
+                segs = song_ids[bs:be, ss:se].to(model.device)
+                labels = tgt_labels[:, bs:be, ss:se].to(model.device)
                 attn_mask = attention_masks[bs:be, ss:se].to(model.device)
                 perm_mask = permutation_masks[bs:be, ss:se, ss:se].to(model.device)
-                tgt_mapping = target_mappings[bs:be, ss:se, ss:se].to(model.device)
+                mapping = tgt_mappings[bs:be, ss:se, ss:se].to(model.device)
 
-                optimizer.zero_grad()
                 output = model(
                     input_ids=segs,
                     labels=labels,
                     attention_mask=attn_mask,
                     mems=mems,
                     perm_mask=perm_mask,
-                    target_mapping=tgt_mapping,
+                    target_mapping=mapping,
                 )
-                output.losses.backward()
-                optimizer.step()
+                loss = torch.mean(torch.stack(output.losses, dim=0))
+                loss.backward()
 
                 mems = output.mems
-                running_loss += output.losses.item()
-                n_tokens += len(labels[labels != 0])
 
-            pbar.update(len(songs[bs:be]))
+                n = len(labels[labels != tokenizer.ignore_idx])
+                running_loss += loss.item() * n
+                n_tokens += n
+
+            if (batch_step+1) % accm_step == 0:
+                optimizer.step()
+                optimizer.zero_grad()
+
+            pbar.update(len(song_ids[bs:be]))
         pbar.close()
 
-        #running_loss /= ((len(songs) / batch_size) * (max_seq_len / seg_size))
         running_loss = running_loss / n_tokens
-        print(" "*4, "losses sum:", running_loss, "\n")
+        print(" "*4, "average loss:", running_loss, " "*4, "learning rate:", scheduler.get_last_lr()[0], "\n")
+        scheduler.step()
 
         save_ckpt(save_path, epoch_idx, config, model, optimizer, running_loss, tokenizer)
-
-def gen_permutation_mask_and_target(songs, max_seq_len, B_start, B_end):
-    """
-    permutation: [A, B, C] -> [A, C, B]
-    mask: 0 -> attend, 1 -> not attend
-    """
-    #B_start, B_end = max_seq_len//3*1, max_seq_len//3*2 # [B_start, B_end)
-    A_len, B_len, C_len = B_start, B_end-B_start, max_seq_len-B_end
-
-    mask = torch.zeros(max_seq_len, max_seq_len)
-
-    # part A
-    mask_a = torch.triu(torch.ones((A_len, A_len)))
-    mask[:B_start, :B_start] += mask_a
-    mask[:B_start, B_start:] += 1.0
-
-    # part C
-    mask_c = torch.triu(torch.ones((C_len, C_len)))
-    mask[B_end:, B_end:] += mask_c
-    mask[B_start:B_end, B_start:B_end] += 1.0
-
-    # part B
-    mask_b = torch.triu(torch.ones((B_len, B_len)))
-    mask[B_start:B_end, B_start:B_end] += mask_b
-
-    mask = (mask > 0)[None, :, :].expand(len(songs), -1, -1).to(torch.float)
-
-    mapping = torch.eye(max_seq_len, max_seq_len)[None, :, :].expand(len(songs), -1, -1).to(torch.float)
-    label = torch.zeros(len(songs), max_seq_len).to(torch.long)
-    label[:, B_start:B_end] = songs[:, B_start:B_end]
-
-    return mask, mapping, label
 
 def test(model, song, cuda, seg_size, tokenizer):
     model.eval()
@@ -468,10 +498,10 @@ def test(model, song, cuda, seg_size, tokenizer):
             output_ids.append(torch.argmax(output.pred_scores, dim=-1)[0][-1].item())
         print(list(map(lambda i: tokenizer[i], output_ids)))
 
-def select_first_n_bar(songs, n_bar):
+def select_bars(songs, start, end):
     clipped_songs = []
     for song in songs:
-        clipped_songs.append(song.clip(0, n_bar))
+        clipped_songs.append(song.clip(start, end))
     return clipped_songs
 
 def generate_transxl(model, prompt_ids, cuda, seg_size, tokenizer, max_gen_len):
@@ -487,7 +517,7 @@ def generate_transxl(model, prompt_ids, cuda, seg_size, tokenizer, max_gen_len):
         seg_size = model.mem_len if model.mem_len < seg_size else seg_size
 
         """
-        generate momery embeddings
+        generate momery
         """
         gen_id = None
         mems = None
@@ -512,7 +542,6 @@ def generate_transxl(model, prompt_ids, cuda, seg_size, tokenizer, max_gen_len):
         generate new contents
         """
         #output_ids = torch.argmax(output.pred_scores, dim=-1)
-        total_gen_num = 1
         while True:
             segs = gen_id[None, None]
             segs = segs.cuda() if cuda else segs
@@ -544,134 +573,86 @@ def generate_xlnet(model, prompts_past, prompts_future, gen_len, cuda, seg_size,
     model = model.cuda() if cuda else model
 
     result_ids = []
-    assert len(prompts_past) == len(prompts_future)
+    #assert len(prompts_past) == len(prompts_future)
     pbar = tqdm(desc="Generating", total=len(prompts_past))
     for i in range(len(prompts_past)):
-        past, future = prompts_past[i], prompts_future[i]
-        prompt = Song(); prompt.info_copy(past)
-        prompt.extend(past)
-        prompt.extend([0] * (gen_len-len(past)-len(future)))
-        prompt.extend(future)
+        past = prompts_past[i]
+        future = prompts_future[i]
 
-        result = Song(); result.info_copy(prompt)
+        prompt = past + ([0] * gen_len) + future
+
         total_len = len(prompt)
         gen_start = len(past)
-        gen_end = total_len-len(future)
-        prompt = torch.tensor(prompt, dtype=torch.long)[None, :] # make shape to (1, L)
-        permutation_masks, target_mappings, tgt_labels = gen_permutation_mask_and_target(prompt, total_len, gen_start, gen_end)
+        gen_end = gen_start + gen_len
+
+        prompt = torch.LongTensor(prompt)[None, :] # make shape to (1, L)
+        permutation_masks, tgt_mappings, tgt_labels = model.gen_mask_and_target(prompt, total_len, gen_start, gen_end)
 
         # limit segment length not longer than memory length
         seg_size = model.mem_len if model.mem_len < seg_size else seg_size
 
-        mems = None
-        for seg_idx in range(gen_start, gen_end, seg_size): # split a long sequence into small segments
-            ss, se = seg_idx, seg_idx+seg_size
+        """
+        generate memory
+        unlike transformerXL, we don't sample the first generated id(s) here
+        """
+        ss, se = (0, len(past)+1) # generate the first target to get memory
+        segs = prompt[:, ss:se].to(model.device)
+        tgt_idx = len(past)
 
-            for tgt_idx in range(ss, se):
-                segs = prompt[:, ss:se].to(model.device)
-                #labels = tgt_labels[:, ss:se].to(model.device)
-                #attn_mask = attention_masks[:, ss:se].to(model.device)
-                perm_mask = permutation_masks[:, ss:se, ss:se].to(model.device)
-                tgt_mapping = target_mappings[:, tgt_idx:tgt_idx+1, ss:se].to(model.device)
+        perm_mask = permutation_masks[:, ss:se, ss:se].to(model.device)
+        mapping = tgt_mappings[:, tgt_idx:tgt_idx+1, ss:se].to(model.device)
 
-                output = model(
-                    input_ids=segs,
-                    labels=None,
-                    attention_mask=None,
-                    mems=mems,
-                    perm_mask=perm_mask,
-                    target_mapping=tgt_mapping,
-                )
-                gen_id = utils.nucleus(output.pred_scores)[0, -1].item()
-                result.append(gen_id)
-                prompt[0][tgt_idx] = gen_id
-                print(tokenizer[gen_id])
+        output = model(
+            input_ids=segs,
+            labels=None,
+            attention_mask=None,
+            mems=None,
+            perm_mask=perm_mask,
+            target_mapping=mapping,
+        )
 
-            mems = output.mems
-
-        exit()
+        mems = output.mems
+        result = []
 
         """
-        generate momery embeddings
+        generate result
         """
-        mems = None
-        first_gen_id = None
-        for seg_idx in range(0, len(prompt), seg_size): # split a long sequence into small segments
-            segs = prompt[None, seg_idx:seg_idx+seg_size]
-            segs = segs.cuda() if cuda else segs
+        ss, se = (gen_start, prompt.shape[1])
 
-            output = model(input_ids=segs, mems=mems)
-            mems = output.mems
+        for tgt_idx in range(gen_start, gen_end):
+            segs = prompt[:, ss:se].to(model.device)
+            perm_mask = permutation_masks[:, ss:se, ss:se].to(model.device)
+            mapping = tgt_mappings[:, tgt_idx:tgt_idx+1, ss:se].to(model.device)
 
-            output_ids = torch.argmax(output.pred_scores, dim=-1)
-            first_gen_id = output_ids[0, -1]
-
-        """
-        generate new contents
-        """
-        #output_ids = torch.argmax(output.pred_scores, dim=-1)
-        total_gen_num = 0
-        gen_id = first_gen_id.item()
-        while True:
-            segs = torch.tensor(gen_id, dtype=torch.int).view(1,1)
-            segs = segs.cuda() if cuda else segs
-
-            output = model(input_ids=segs, mems=mems)
-            mems = output.mems
-
-            #gen_id = torch.argmax(output.pred_scores, dim=-1)[0, -1].item()
-            gen_id = model.nucleus(output.pred_scores)[0, -1].item()
-            total_gen_num += 1
-            #print(tokenizer[gen_id])
-            result.append(gen_id)
-            if tokenizer[gen_id] == "EOS":
+            output = model(
+                input_ids=segs,
+                labels=None,
+                attention_mask=None,
+                mems=mems,
+                perm_mask=perm_mask,
+                target_mapping=mapping,
+            )
+            #gen_id = utils.nucleus(output.pred_scores)[0, -1].item()
+            while True:
+                output_ids = tokenizer.sample(output.pred_scores)
+                gen_id = output_ids[0, 0]
+                if tokenizer.is_legal(gen_id):
+                    break
+                else:
+                    print("illegal generated id:", tokenizer.id_to_token(gen_id))
+            result.append(gen_id.tolist())
+            if tokenizer.is_eos(gen_id):
                 break
-            if not total_gen_num < max_gen_len:
+            if len(result) >= gen_len:
                 break
+            prompt[0][tgt_idx] = gen_id
+
+            #mems = output.mems
         result_ids.append(result)
         pbar.update(1)
     pbar.close()
 
     return result_ids
-
-def token_ids_to_midi(song, tokenizer):
-    midi_data = pretty_midi.PrettyMIDI(initial_tempo=song.bpm)
-    inst = pretty_midi.Instrument(program=0)
-    text = []
-
-    global_beat = 0
-    beat_time = 60 / song.bpm
-    for token_id in song:
-        if token_id == tokenizer["BOS"] or token_id == tokenizer["EOS"]:
-            continue
-        token = tokenizer[token_id]
-        value = int(token.split("(")[1].split(")")[0])
-        if "Bar" in token:
-            global_beat += song.beat_per_bar
-        elif "Label" in token:
-            label = value
-        elif "Tempo" in token:
-            tempo = value
-        elif "Position" in token:
-            subbeat = value
-        elif "Pitch" in token:
-            pitch = value
-        elif "Velocity" in token:
-            velocity = value
-        elif "Duration" in token:
-            duration = value
-            onbeat = global_beat + subbeat / song.beat_division
-            offbeat = onbeat + duration / song.beat_division
-            #print(onbeat, offbeat)
-            note = pretty_midi.Note(velocity=100, pitch=pitch, start=onbeat*beat_time, end=offbeat*beat_time)
-            inst.notes.append(note)
-        else:
-            raise Exception(f'Unknow token: {token}')
-
-        text.append(token)
-
-    midi_data.instruments.append(inst)
-    return midi_data ,text
 
 if __name__ == "__main__":
     main()
