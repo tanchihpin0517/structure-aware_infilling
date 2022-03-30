@@ -12,7 +12,7 @@ class Config:
     n_head: int
     n_layer: int
     mem_len: int
-    clamp_len: int = 4096
+    clamp_len: int = -1 # default without clamp
     ignore_idx: int = -100
     dropout: float = 0.1
     layer_norm_eps: float = 1e-12

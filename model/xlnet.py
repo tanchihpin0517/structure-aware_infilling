@@ -69,6 +69,7 @@ class XLNetRelativeAttention(nn.Module):
         k_head_h,
         v_head_h,
         k_head_r,
+        pos_idx,
         seg_mat=None,
         attn_mask=None,
         head_mask=None,
@@ -81,7 +82,12 @@ class XLNetRelativeAttention(nn.Module):
 
         # position based attention score
         bd = torch.einsum("ibnd,jbnd->bnij", q_head + self.r_r_bias, k_head_r)
-        bd = self.rel_shift_bnij(bd, klen=ac.shape[3])
+        """
+        pos_idx: (batch_size, qlen, klen)
+        """
+        pos_idx = pos_idx[:, None, :, :].expand(-1, bd.shape[1], -1, -1) # expand for heads
+        #bd = self.rel_shift_bnij(bd, klen=ac.shape[3])
+        bd = torch.gather(bd, 3, pos_idx)
 
         # segment based attention score
         if seg_mat is None:
@@ -134,6 +140,7 @@ class XLNetRelativeAttention(nn.Module):
         attn_mask_h,
         attn_mask_g,
         r,
+        pos_idx,
         seg_mat,
         mems=None,
         target_mapping=None,
@@ -167,6 +174,7 @@ class XLNetRelativeAttention(nn.Module):
                 k_head_h,
                 v_head_h,
                 k_head_r,
+                pos_idx,
                 seg_mat=seg_mat,
                 attn_mask=attn_mask_h,
                 head_mask=head_mask,
@@ -191,6 +199,7 @@ class XLNetRelativeAttention(nn.Module):
                     k_head_h,
                     v_head_h,
                     k_head_r,
+                    pos_idx,
                     seg_mat=seg_mat,
                     attn_mask=attn_mask_g,
                     head_mask=head_mask,
@@ -207,6 +216,7 @@ class XLNetRelativeAttention(nn.Module):
                     k_head_h,
                     v_head_h,
                     k_head_r,
+                    pos_idx,
                     seg_mat=seg_mat,
                     attn_mask=attn_mask_g,
                     head_mask=head_mask,
@@ -244,6 +254,7 @@ class XLNetRelativeAttention(nn.Module):
                 k_head_h,
                 v_head_h,
                 k_head_r,
+                pos_idx,
                 seg_mat=seg_mat,
                 attn_mask=attn_mask_h,
                 head_mask=head_mask,
@@ -299,6 +310,7 @@ class XLNetLayer(nn.Module):
         attn_mask_h,
         attn_mask_g,
         r,
+        pos_idx,
         seg_mat,
         mems=None,
         target_mapping=None,
@@ -311,6 +323,7 @@ class XLNetLayer(nn.Module):
             attn_mask_h,
             attn_mask_g,
             r,
+            pos_idx,
             seg_mat,
             mems=mems,
             target_mapping=target_mapping,
@@ -351,7 +364,7 @@ class XLNetConfig(Config):
 
 @dataclass
 class XLNetOutput(Output):
-    pass
+    mem_pos_ids: torch.LongTensor = None
 
 class XLNet(nn.Module):
     def __init__(self, config) -> None:
@@ -471,6 +484,7 @@ class XLNet(nn.Module):
     @staticmethod
     def positional_embedding(pos_seq, inv_freq, bsz=None):
         """
+        [output]
         pos_emb: (L, B, D)
             L: sequence length
             B: batch size
@@ -535,11 +549,14 @@ class XLNet(nn.Module):
     def forward(
         self,
         input_ids=None,
+        pos_ids=None,
         labels=None,
         attention_mask=None,
         mems=None,
+        mem_pos_ids=None,
         perm_mask=None,
         target_mapping=None,
+        token_type_ids=None,
         input_mask=None,
         head_mask=None,
         inputs_embeds=None,
@@ -547,18 +564,15 @@ class XLNet(nn.Module):
         output_attentions=False,
         output_hidden_states=False,
     ):
+        dtype_float = self.dtype
+        device = self.device
+        batch_size = len(input_ids)
+
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
         ###return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
-        ###if "use_cache" in kwargs:
-        ###    warnings.warn(
-        ###        "The `use_cache` argument is deprecated and will be removed in a future version, use `use_mems` instead.",
-        ###        FutureWarning,
-        ###    )
-        ###    use_mems = kwargs["use_cache"]
 
         if self.training:
             use_mems = use_mems if use_mems is not None else self.config.use_mems_train
@@ -579,7 +593,7 @@ class XLNet(nn.Module):
         else:
             raise ValueError("You have to specify either input_ids or inputs_embeds")
 
-        ###token_type_ids = token_type_ids.transpose(0, 1).contiguous() if token_type_ids is not None else None
+        token_type_ids = token_type_ids.transpose(0, 1).contiguous() if token_type_ids is not None else None
         input_mask = input_mask.transpose(0, 1).contiguous() if input_mask is not None else None
         attention_mask = attention_mask.transpose(0, 1).contiguous() if attention_mask is not None else None
         perm_mask = perm_mask.permute(1, 2, 0).contiguous() if perm_mask is not None else None
@@ -587,9 +601,6 @@ class XLNet(nn.Module):
 
         mlen = mems[0].shape[0] if mems is not None and mems[0] is not None else 0
         klen = mlen + qlen
-
-        dtype_float = self.dtype
-        device = self.device
 
         # Attention mask
         # causal attention mask
@@ -651,24 +662,52 @@ class XLNet(nn.Module):
         else:
             output_g = None
 
-        #### Segment embedding
-        ###if token_type_ids is not None:
-        ###    # Convert `token_type_ids` to one-hot `seg_mat`
-        ###    if mlen > 0:
-        ###        mem_pad = torch.zeros([mlen, bsz], dtype=torch.long, device=device)
-        ###        cat_ids = torch.cat([mem_pad, token_type_ids], dim=0)
-        ###    else:
-        ###        cat_ids = token_type_ids
+        # Segment embedding
+        if token_type_ids is not None:
+            # Convert `token_type_ids` to one-hot `seg_mat`
+            if mlen > 0:
+                mem_pad = torch.zeros([mlen, bsz], dtype=torch.long, device=device)
+                cat_ids = torch.cat([mem_pad, token_type_ids], dim=0)
+            else:
+                cat_ids = token_type_ids
 
-        ###    # `1` indicates not in the same segment [qlen x klen x bsz]
-        ###    seg_mat = (token_type_ids[:, None] != cat_ids[None, :]).long()
-        ###    seg_mat = nn.functional.one_hot(seg_mat, num_classes=2).to(dtype_float)
-        ###else:
-        ###    seg_mat = None
+            # `1` indicates not in the same segment [qlen x klen x bsz]
+            seg_mat = (token_type_ids[:, None] != cat_ids[None, :]).long()
+            seg_mat = nn.functional.one_hot(seg_mat, num_classes=2).to(dtype_float)
+        else:
+            seg_mat = None
 
         # Positional encoding
         pos_emb = self.relative_positional_encoding(qlen, klen, bsz=bsz)
         pos_emb = self.dropout(pos_emb)
+
+        """
+        pos_ids: (B, L)
+            B: batch size
+            L: sequence length
+
+        pos_emb: (klen, klen-1, klen-2, ..., 1(klen_1), 0(qlen_0), -1, -2, ..., -(qlen-2), -(qlen-1))
+                  |------------- klen -----------|
+        pos_idx: (B, qlen, klen)
+            we don't transpose pos_idx here because it's used in this order in rel_attn_core
+        """
+        # position ids
+        if pos_ids is not None:
+            if mem_pos_ids is not None:
+                pos_ids = torch.cat((mem_pos_ids, pos_ids), dim=1)
+            assert pos_ids.shape == (batch_size, klen)
+        else:
+            pos_ids = torch.arange(klen, device=device)[None].expand(batch_size, klen)
+
+        if use_mems:
+            new_mem_pos_ids = pos_ids[:, -self.mem_len:]
+        else:
+            new_mem_pos_ids = None
+
+        pos_idx = pos_ids[:, None, :].expand(-1, qlen, -1)
+        tgt_idx = torch.arange(klen-qlen, klen, device=device)[None, :, None].expand(pos_idx.shape)
+        pos_idx = pos_idx - torch.gather(pos_idx, 2, tgt_idx) + klen
+        #pos_idx = pos_idx.transpose(0, 1).contiguous()
 
         # Prepare head mask if needed
         # 1.0 in head_mask indicate we keep the head
@@ -706,8 +745,8 @@ class XLNet(nn.Module):
                 attn_mask_h=non_tgt_mask,
                 attn_mask_g=attn_mask,
                 r=pos_emb,
-                ###seg_mat=seg_mat,
-                seg_mat=None,
+                pos_idx=pos_idx,
+                seg_mat=seg_mat,
                 mems=mems[i],
                 target_mapping=target_mapping,
                 head_mask=head_mask[i],
@@ -765,6 +804,7 @@ class XLNet(nn.Module):
             last_hidden_states=output,
             pred_scores = pred_scores,
             mems=new_mems,
+            mem_pos_ids=new_mem_pos_ids,
             hidden_states=hidden_states,
             attentions=attentions
         )

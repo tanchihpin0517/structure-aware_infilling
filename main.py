@@ -15,6 +15,8 @@ import pretty_midi
 from model.general import Checkpoint
 import random
 import multiprocessing as mp
+from typing import Tuple
+import copy
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -72,8 +74,12 @@ def main():
         utils.check_save_path(args.save_path)
 
         tokenizer = Tokenizer(args.vocab_file, use_cp=use_cp)
-        song_ids = tokenize(songs_data, tokenizer)
-        training_song_ids = song_ids[len(song_ids)*(10-args.training_split_ratio)//10:]
+        song_ids, bar_ids = tokenize(songs_data, tokenizer)
+
+        assert len(song_ids) == len(bar_ids)
+        sp = len(song_ids)*(10-args.training_split_ratio)//10
+        training_song_ids = song_ids[sp:]
+        training_bar_ids = bar_ids[sp:]
 
         if args.model == "transformer_xl":
             config = TransformerXLConfig(
@@ -83,7 +89,6 @@ def main():
                 n_head = args.num_head,
                 n_layer = args.num_layer,
                 mem_len = args.mem_len,
-                clamp_len = args.mem_len,
                 use_cp=use_cp,
                 d_subembed=args.dim_subembed,
                 class_ranges=tokenizer.class_ranges(),
@@ -109,7 +114,6 @@ def main():
                 n_head = args.num_head,
                 n_layer = args.num_layer,
                 mem_len = args.mem_len,
-                clamp_len = args.mem_len,
                 use_cp=use_cp,
                 d_subembed=args.dim_subembed,
                 class_ranges=tokenizer.class_ranges(),
@@ -120,6 +124,7 @@ def main():
             train_xlnet(
                 model,
                 training_song_ids,
+                training_bar_ids,
                 args.epoch_num,
                 args.batch_size,
                 args.seg_size,
@@ -250,8 +255,9 @@ def load_data(data_file, track_sel=['melody', 'bridge', 'piano'], max_song_num=N
 
     return data
 
-def tokenize(songs_data, tokenizer, with_eos=True) -> list:
+def tokenize(songs_data, tokenizer, with_eos=True) -> Tuple[list, list]:
     songs = []
+    bar_ids = []
 
     with mp.Pool() as pool:
         map_args = []
@@ -259,18 +265,20 @@ def tokenize(songs_data, tokenizer, with_eos=True) -> list:
             map_args.append((song, tokenizer, with_eos))
 
         pbar = tqdm(desc="Tokenize", total=len(songs_data))
-        for song in pool.imap(tokenize_map, map_args):
+        for i, (song, bar_id) in enumerate(pool.imap(tokenize_map, map_args)):
+            assert len(song) == len(bar_id), f"song {songs_data[i].name}: len(song, bar_id) = ({len(song)}, {len(bar_id)})"
             songs.append(song)
+            bar_ids.append(bar_id)
             pbar.update(1)
         pbar.close()
 
-    return songs
+    return songs, bar_ids
 
 def tokenize_map(args):
     song, tokenizer, with_eos = args
-    song = tokenizer.encode(song, with_eos=with_eos)
+    song, bar_id = tokenizer.encode(song, with_eos=with_eos)
     song = tokenizer.token_to_id(song)
-    return song
+    return song, bar_id
 
 def get_max_seq_len(songs, verbose=True):
     song_lens = np.array(list(map(lambda s: len(s), songs)))
@@ -382,7 +390,7 @@ def train_transxl(model, song_ids, epoch_num, batch_size, seg_size, cuda, config
 
         save_ckpt(save_path, epoch_idx, config, model, optimizer, running_loss, tokenizer)
 
-def train_xlnet(model, song_ids, epoch_num, batch_size, seg_size, cuda, config, tokenizer, save_path, accm_step=1, max_seq_len=None, only_middle=False):
+def train_xlnet(model, song_ids, bar_ids, epoch_num, batch_size, seg_size, cuda, config, tokenizer, save_path, accm_step=1, max_seq_len=None, only_middle=False):
     model.train()
     model = model.cuda() if cuda else model
 
@@ -396,6 +404,13 @@ def train_xlnet(model, song_ids, epoch_num, batch_size, seg_size, cuda, config, 
 
     # attention mask: 0 -> not attend, 1 -> attend
     song_ids, attention_masks = tokenizer.pad(song_ids, 0, max_seq_len)
+
+    # extend bar_ids to max_seq_len
+    bar_ids = copy.deepcopy(bar_ids) # why not?
+    for i, bid in enumerate(bar_ids):
+        bar_ids[i] = bid[:max_seq_len] + [bid[max_seq_len-1]]*(max_seq_len-len(bid))
+    bar_ids = torch.LongTensor(bar_ids)
+    assert bar_ids.shape == song_ids.shape
 
     # permutation mask: 0 -> attend, 1 -> not attend
     permutation_masks, tgt_mappings, tgt_labels = model.gen_mask_and_target(song_ids, max_seq_len, max_seq_len//3, max_seq_len//3*2, only_middle=only_middle)
@@ -412,12 +427,14 @@ def train_xlnet(model, song_ids, epoch_num, batch_size, seg_size, cuda, config, 
         for batch_step, batch_idx in enumerate(range(0, len(song_ids), batch_size)):
             bs, be = batch_idx, batch_idx+batch_size
             mems = None
+            mem_pos_ids = None
 
             # split a long sequence into small segments
             for _, seg_idx in enumerate(range(0, max_seq_len, seg_size)):
                 ss, se = seg_idx, seg_idx+seg_size
 
                 segs = song_ids[bs:be, ss:se].to(model.device)
+                bids = bar_ids[bs:be, ss:se].to(model.device)
                 labels = tgt_labels[:, bs:be, ss:se].to(model.device)
                 attn_mask = attention_masks[bs:be, ss:se].to(model.device)
                 perm_mask = permutation_masks[bs:be, ss:se, ss:se].to(model.device)
@@ -425,6 +442,8 @@ def train_xlnet(model, song_ids, epoch_num, batch_size, seg_size, cuda, config, 
 
                 output = model(
                     input_ids=segs,
+                    pos_ids=bids,
+                    mem_pos_ids=mem_pos_ids,
                     labels=labels,
                     attention_mask=attn_mask,
                     mems=mems,
@@ -435,6 +454,7 @@ def train_xlnet(model, song_ids, epoch_num, batch_size, seg_size, cuda, config, 
                 loss.backward()
 
                 mems = output.mems
+                mem_pos_ids = output.mem_pos_ids
 
                 n = len(labels[labels != tokenizer.ignore_idx])
                 running_loss += loss.item() * n

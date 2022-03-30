@@ -1,5 +1,5 @@
 import os
-from typing import List
+from typing import List, Tuple
 from music import Song, Bar, Event, Note
 from collections.abc import Iterable
 import copy
@@ -111,8 +111,8 @@ class Tokenizer:
         REMI:
             begin: bos
             ...
-            k-2: struct
-            k-1: bar(1)
+            k-2: bar(1)
+            k-1: struct
             k: tempo
             k+1: pos
             k+2: pitch
@@ -123,9 +123,9 @@ class Tokenizer:
         """
         tokens = [
             self.PAD,
-            self.MASK,
-            self.BOS,
-            self.EOS,
+            self.MASK, # not used
+            self.BOS, # not used (bar(BOS) instead)
+            self.EOS, # not used (bar(EOS) instead)
             self.BOP,
             self.EOP,
         ]
@@ -134,6 +134,9 @@ class Tokenizer:
         bar, tempo, pos, pitch, vel, dur, struct = [[] for _ in range(7)]
         offset = len(tokens)
 
+        """
+        we didn't add bar(BOP) and bar(EOP) because those two tokens are used only by TransformerXL
+        """
         bar.extend([self.bar(t) for t in [self.BOS, self.EOS]])
         bar.extend([self.bar(b) for b in range(2)])
         self.class_tabel[self.BAR] = (offset, offset+len(bar))
@@ -186,7 +189,7 @@ class Tokenizer:
             self.token_to_id_tabel[token] = i
             self.id_to_token_tabel.append(token)
 
-    def encode(self, song: Song, with_eos=True) -> list:
+    def encode(self, song: Song, with_eos=True) -> Tuple[list, list]:
         # remove empty bars in the begin and end of songs
         start, end = 0, len(song.bars)
         for bar in song.bars:
@@ -199,6 +202,8 @@ class Tokenizer:
             end -= 1
 
         song = song.clip(start, end)
+        bar_id = []
+        bar_count = 0
 
         if self.use_cp:
             tokens = [[
@@ -210,6 +215,8 @@ class Tokenizer:
                 self.dur(self.BAR),
                 self.struct(self.NONE)
             ]]
+            bar_id.append(bar_count) # bos is not a new bar
+
             struct_count = 0
             struct_map = OrderedDict()
             last_struct = None
@@ -236,6 +243,8 @@ class Tokenizer:
                                self.dur(self.BAR),
                                struct
                 ])
+                bar_id.append(bar_count)
+                bar_count += 1
 
                 # note
                 for event in bar.events:
@@ -255,6 +264,7 @@ class Tokenizer:
                                        self.dur(dur),
                                        struct
                         ])
+                        bar_id.append(bar_count)
 
             if with_eos:
                 tokens.append([self.bar(self.EOS),
@@ -265,10 +275,13 @@ class Tokenizer:
                                self.dur(self.BAR),
                                struct_map[last_struct]
                 ])
+                bar_id.append(bar_count)
 
-            return tokens
+            return tokens, bar_id
         else:
             tokens = [self.bar(self.BOS)]
+            bar_id.append(bar_count) # bos is not a new bar
+
             struct_count = 0
             struct_map = {}
             last_struct = None
@@ -276,6 +289,8 @@ class Tokenizer:
             for bar in song.bars:
                 # bar
                 tokens.append(self.bar(1))
+                bar_id.append(bar_count)
+                bar_count += 1
 
                 # struct
                 if bar.struct is not None and bar.struct != last_struct:
@@ -287,6 +302,7 @@ class Tokenizer:
                     tokens.append(self.struct(self.NONE))
                 else:
                     tokens.append(struct_map[bar.struct])
+                bar_id.append(bar_count)
 
                 # note
                 for event in bar.events:
@@ -305,10 +321,12 @@ class Tokenizer:
                             #self.vel(vel),
                             self.dur(dur),
                         ])
+                        bar_id.extend([bar_count]*4)
             if with_eos:
                 tokens.append(self.bar(self.EOS))
+                bar_id.append(bar_count)
 
-            return tokens
+            return tokens, bar_id
 
     def decode(self, tokens, empty_song: Song) -> Song:
         assert len(empty_song.bars) == 0
@@ -421,7 +439,7 @@ class Tokenizer:
                 token[i] = self[item]
 
     def id_to_token(self, tid):
-        assert isinstance(tid, (list, torch.Tensor, np.ndarray)), f"{type(tid)} is not allowed."
+        assert isinstance(tid, (int, list, torch.Tensor, np.ndarray)), f"{type(tid)} is not allowed."
 
         if isinstance(tid, (torch.Tensor, np.ndarray)):
             tid = tid.tolist()
