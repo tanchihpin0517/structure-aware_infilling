@@ -104,7 +104,10 @@ def main():
                 args.cuda,
                 config,
                 tokenizer,
-                args.save_path
+                args.save_path,
+                accm_step=args.accm_step,
+                max_seq_len=args.max_seq_len,
+                only_middle=args.only_middle,
             )
         elif args.model == "xlnet":
             config = XLNetConfig(
@@ -331,6 +334,9 @@ def train_transxl(model, song_ids, epoch_num, batch_size, seg_size, cuda, config
     model.train()
     model = model.cuda() if cuda else model
 
+    # permute songs before count max sequence length because permutation will add 2 segment tokens into songs
+    song_ids, seg_ids, ignore_labels = model.permute(song_ids, 1/3, 2/3, tokenizer, only_middle=only_middle)
+
     """
     To reduce training time, we set the max sequence length to (mean + 2*standard_deviation)
     """
@@ -339,7 +345,9 @@ def train_transxl(model, song_ids, epoch_num, batch_size, seg_size, cuda, config
     else:
         print(f"max sequence length is set to {max_seq_len}")
 
-    song_ids, _ = tokenizer.pad(song_ids, 0, max_seq_len)
+    song_ids, _ = tokenizer.pad(song_ids, 0, max_seq_len, gen_mask=False)
+    seg_ids, _ = tokenizer.pad(seg_ids, 0, max_seq_len, gen_mask=False, use_cp=False)
+    ignore_labels, _ = tokenizer.pad(ignore_labels, 0, max_seq_len, gen_mask=False, use_cp=False)
 
     """
     if use_cp:
@@ -347,10 +355,10 @@ def train_transxl(model, song_ids, epoch_num, batch_size, seg_size, cuda, config
     else:
         labels: (1, B, L)
     """
-    labels = tokenizer.get_labels(song_ids)
+    labels = tokenizer.get_labels(song_ids, ignore_labels=ignore_labels)
 
     optimizer = default_optimizer(model, lr=1e-4)
-    scheduler = default_scheduler(optimizer, lr_max=2.0, lr_min=1.0, T=10, warmup=10)
+    scheduler = default_scheduler(optimizer, lr_max=2.0, lr_min=1.0, T=10, warmup=10, refine=50)
 
     for epoch_idx in range(epoch_num):
         pbar = tqdm(desc=f"epoch {epoch_idx+1}", total=len(song_ids))
@@ -361,13 +369,16 @@ def train_transxl(model, song_ids, epoch_num, batch_size, seg_size, cuda, config
             batch = song_ids[batch_idx:batch_idx+batch_size]
             mems = None
             for seg_idx in range(0, max_seq_len, seg_size): # split a long sequence into small segments
-                songs_batch = song_ids[batch_idx:batch_idx+batch_size, seg_idx:seg_idx+seg_size]
-                labels_batch = labels[:, batch_idx:batch_idx+batch_size, seg_idx+1:seg_idx+seg_size+1]
-                if cuda:
-                    songs_batch = songs_batch.cuda()
-                    labels_batch = labels_batch.cuda()
+                songs_batch = song_ids[batch_idx:batch_idx+batch_size, seg_idx:seg_idx+seg_size].to(model.device)
+                labels_batch = labels[:, batch_idx:batch_idx+batch_size, seg_idx+1:seg_idx+seg_size+1].to(model.device)
+                type_batch = seg_ids[batch_idx:batch_idx+batch_size, seg_idx:seg_idx+seg_size].to(model.device)
 
-                output = model(input_ids=songs_batch, mems=mems, labels=labels_batch)
+                output = model(
+                    input_ids=songs_batch,
+                    mems=mems,
+                    labels=labels_batch,
+                    token_type_ids=type_batch,
+                )
                 loss = torch.mean(torch.stack(output.losses, dim=0))
                 loss.backward()
 
@@ -417,7 +428,7 @@ def train_xlnet(model, song_ids, bar_ids, epoch_num, batch_size, seg_size, cuda,
     tgt_labels = tokenizer.get_labels(tgt_labels)
 
     optimizer = default_optimizer(model, lr=1e-4)
-    scheduler = default_scheduler(optimizer, lr_max=2.0, lr_min=1.0, T=10, warmup=10)
+    scheduler = default_scheduler(optimizer, lr_max=2.0, lr_min=1.0, T=10, warmup=10, refine=50)
 
     for epoch_idx in range(epoch_num):
         pbar = tqdm(desc=f"epoch {epoch_idx+1}", total=len(song_ids))

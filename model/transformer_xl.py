@@ -2,7 +2,7 @@ import torch
 from torch import nn
 from .general import Config, Output, REMIEmbedding, CPEmbedding
 from dataclasses import dataclass
-
+import math
 
 class PositionalEmbedding(nn.Module):
     def __init__(self, demb):
@@ -234,6 +234,7 @@ class TransformerXLConfig(Config):
     d_head: int = 0
     xavier: float = False
     init_std: float = 0.02
+    token_type_num: int = 3
 
     def __post_init__(self):
         assert self.d_model % self.n_head == 0
@@ -257,14 +258,17 @@ class TransformerXL(nn.Module):
         self.clamp_len = config.clamp_len
         self.use_cp = config.use_cp
         self.infilling = config.infilling
+        self.token_type_num = config.token_type_num
 
         if config.use_cp:
             self.word_emb = CPEmbedding(config.vocab_size, config.d_model, config.d_subembed, config.class_ranges)
         else:
             self.word_emb = REMIEmbedding(config.vocab_size, config.d_model)
 
-        if config.infilling:
-            self.seg_embed
+        self.seg_embed = nn.Embedding(config.token_type_num, config.d_model)
+        self.seg_id_A = 0
+        self.seg_id_B = 1
+        self.seg_id_C = 2
 
         self.pos_emb = PositionalEmbedding(self.d_model)
         self.r_w_bias = nn.Parameter(torch.FloatTensor(self.n_head, self.d_head))
@@ -294,13 +298,21 @@ class TransformerXL(nn.Module):
 
         self.apply(self._init_weights)
 
+    @property
+    def dtype(self):
+        return next(self.parameters()).dtype
+
+    @property
+    def device(self):
+        return next(self.parameters()).device
+
     def forward(
         self,
         input_ids,
         mems=None,
         labels=None,
         head_mask=None,
-        inputs_embeds=None,
+        token_type_ids=None,
         output_attentions=False,
         output_hidden_states=False,
         return_dict=True,
@@ -336,6 +348,12 @@ class TransformerXL(nn.Module):
         except IndexError:
             raise IndexError('Vocabulary size of model and input are not matched.')
 
+        if token_type_ids is not None:
+            token_type_ids = token_type_ids.transpose(0, 1).contiguous()
+            seg_emb = self.seg_embed(token_type_ids)
+        else:
+            seg_emb = None
+
         mlen = mems[0].size(0) if mems is not None else 0
         klen = mlen + qlen
         all_ones = word_emb.new_ones((qlen, klen), dtype=torch.uint8)
@@ -353,7 +371,7 @@ class TransformerXL(nn.Module):
             pos_seq.clamp_(max=self.clamp_len)
         pos_emb = self.pos_emb(pos_seq)
 
-        core_out = self.drop(word_emb)
+        core_out = self.drop(word_emb + seg_emb) if seg_emb is not None else self.drop(word_emb)
         pos_emb = self.drop(pos_emb)
 
         for i, layer in enumerate(self.layers):
@@ -485,6 +503,52 @@ class TransformerXL(nn.Module):
 
         return new_mems
 
-    def permute(self, song_ids, max_gen_len, B_start, B_end, tokenizer):
-        for song in song_ids:
-            ...
+    def permute(self, song_ids: list, B_start_ratio: float, B_end_ratio: float, tokenizer, only_middle=False):
+        """
+        song_ids should not be padded
+        for *_ratio, use ratio because the lengths of each song are not the same
+
+        song:        BOS (segment A) EOP (segment C) EOP (segment B) EOS (padding)
+        """
+        assert isinstance(song_ids, list)
+        seg_ids = []
+        ignore_labels = []
+
+        if self.infilling:
+            for i, song in enumerate(song_ids):
+                B_start = math.floor(len(song) * B_start_ratio)
+                B_end = math.floor(len(song) * B_end_ratio)
+                assert B_start != B_end
+                tmp = []
+                seg = []
+                ignore = []
+
+                tmp.extend(song[:B_start]) # A
+                tmp.append(tokenizer.eop_id())
+                seg.extend([self.seg_id_A] * (len(tmp)-len(seg)))
+                if only_middle:
+                    ignore.extend([1] * (len(tmp)-len(ignore)))
+                else:
+                    ignore.extend([0] * (len(tmp)-len(ignore)))
+                    ignore[-1] = 1 # EOP
+
+                tmp.extend(song[B_end: -1]) # C without EOS
+                tmp.append(tokenizer.eop_id())
+                seg.extend([self.seg_id_C] * (len(tmp)-len(seg)))
+                ignore.extend([1] * (len(tmp)-len(ignore)))
+
+                tmp.extend(song[B_start: B_end]) # B
+                tmp.append(song[-1]) # EOS
+                seg.extend([self.seg_id_B] * (len(tmp)-len(seg)))
+                ignore.extend([0] * (len(tmp)-len(ignore)))
+
+                song_ids[i] = tmp
+                seg_ids.append(seg)
+                ignore_labels.append(ignore)
+        else:
+            for i, song in enumerate(song_ids):
+                seg_ids.append([self.seg_id_A] * len(song))
+                ignore_labels.append([0] * len(song))
+
+        return song_ids, seg_ids, ignore_labels
+

@@ -46,6 +46,13 @@ class Tokenizer:
     def struct(self, key):
         return f"{self.STRUCT}({key})"
 
+    def eop_id(self):
+        if self.use_cp:
+            # repeat EOP to construct CP token
+            return [self[self.EOP]] * len(self.class_tabel)
+        else:
+            return self[self.EOP]
+
     def __init__(self, vocab_file=None, ignore_idx=-100, use_cp=True, verbose=True):
 
         self.token_to_id_tabel = {}
@@ -470,31 +477,37 @@ class Tokenizer:
     def class_ranges(self):
         return list(self.class_tabel.values())
 
-    def pad(self, songs, val, max_seq_len):
+    def pad(self, songs, val, max_seq_len, gen_mask=True, use_cp=None):
         """
         attention mask: 0 -> not attend, 1 -> attend
         """
         tokens = []
-        masks = []
+        masks = [] if gen_mask else None
+
+        use_cp = use_cp if use_cp is not None else self.use_cp
+
         for song in songs:
-            if self.use_cp:
+            if use_cp:
                 tokens.append(song[:max_seq_len] + [[val]*len(self.class_tabel) for i in range(max_seq_len-len(song))])
             else:
                 tokens.append(song[:max_seq_len] + [val for i in range(max_seq_len-len(song))])
-            masks.append([1]*len(song[:max_seq_len]) + [0 for i in range(max_seq_len-len(song))])
+            if gen_mask:
+                masks.append([1]*len(song[:max_seq_len]) + [0 for i in range(max_seq_len-len(song))])
         tokens = torch.LongTensor(tokens)
         #masks = (tokens != 0).to(torch.float)
-        masks = torch.FloatTensor(masks)
+        if gen_mask:
+            masks = torch.FloatTensor(masks)
 
         return tokens, masks
 
-    def get_labels(self, segs: torch.LongTensor):
+    def get_labels(self, segs: torch.LongTensor, ignore_labels=None):
         """
         This function change PAD token to ignore_idx,
         and shift each class token based on class_tabel
         """
         labels = segs.clone().detach()
         labels[labels == self[self.PAD]] = self.ignore_idx
+        labels[labels == self[self.EOP]] = self.ignore_idx # for segments
 
         if self.use_cp:
             """
@@ -503,6 +516,9 @@ class Tokenizer:
             for i, (k, v) in enumerate(self.class_tabel.items()):
                 range_start = v[0]
                 labels[:, :, i][labels[:, :, i] != self.ignore_idx] -= range_start
+
+        if ignore_labels is not None:
+            labels[ignore_labels > 0] = self.ignore_idx
 
         if self.use_cp:
             return torch.permute(labels, (2, 0, 1)) # move the class dim to the first
