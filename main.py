@@ -33,6 +33,7 @@ def parse_args():
     parser.add_argument('--no-cp', default=False, action='store_true')
     parser.add_argument('--gen-num', type=int, default=16)
     parser.add_argument('--infilling', default=False, action='store_true')
+    parser.add_argument('--bar-pe', default=False, action='store_true')
 
     parser.add_argument('--batch-size', type=int, default=1)
     parser.add_argument('--seg-size', type=int, default=1024)
@@ -127,7 +128,7 @@ def main():
             train_xlnet(
                 model,
                 training_song_ids,
-                training_bar_ids,
+                training_bar_ids if args.bar_pe else None,
                 args.epoch_num,
                 args.batch_size,
                 args.seg_size,
@@ -415,13 +416,10 @@ def train_xlnet(model, song_ids, bar_ids, epoch_num, batch_size, seg_size, cuda,
 
     # attention mask: 0 -> not attend, 1 -> attend
     song_ids, attention_masks = tokenizer.pad(song_ids, 0, max_seq_len)
-
-    # extend bar_ids to max_seq_len
-    bar_ids = copy.deepcopy(bar_ids) # why not?
-    for i, bid in enumerate(bar_ids):
-        bar_ids[i] = bid[:max_seq_len] + [bid[-1]]*(max_seq_len-len(bid)) # extend the last bid to padding part
-    bar_ids = torch.LongTensor(bar_ids)
-    assert bar_ids.shape == song_ids.shape
+    if bar_ids is not None:
+        bar_ids, _ = tokenizer.pad(bar_ids, "last", max_seq_len, gen_mask=False, use_cp=False)
+        assert bar_ids.shape == song_ids.shape[:2]
+        assert model.use_cp, "Bar positional encoding must be used with CP."
 
     # permutation mask: 0 -> attend, 1 -> not attend
     permutation_masks, tgt_mappings, tgt_labels = model.gen_mask_and_target(song_ids, max_seq_len, max_seq_len//3, max_seq_len//3*2, only_middle=only_middle)
@@ -445,7 +443,7 @@ def train_xlnet(model, song_ids, bar_ids, epoch_num, batch_size, seg_size, cuda,
                 ss, se = seg_idx, seg_idx+seg_size
 
                 segs = song_ids[bs:be, ss:se].to(model.device)
-                bids = bar_ids[bs:be, ss:se].to(model.device)
+                bids = bar_ids[bs:be, ss:se].to(model.device) if bar_ids is not None else None
                 labels = tgt_labels[:, bs:be, ss:se].to(model.device)
                 attn_mask = attention_masks[bs:be, ss:se].to(model.device)
                 perm_mask = permutation_masks[bs:be, ss:se, ss:se].to(model.device)

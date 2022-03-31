@@ -17,7 +17,7 @@ class Config:
     dropout: float = 0.1
     layer_norm_eps: float = 1e-12
     use_cp: bool = True
-    d_subembed: int = 256
+    d_subembed: int = -1
     class_ranges: List[tuple] = None
     infilling: bool = True
 

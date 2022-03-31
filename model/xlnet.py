@@ -377,6 +377,7 @@ class XLNet(nn.Module):
         self.clamp_len = config.clamp_len
         self.n_layer = config.n_layer
         self.infilling = config.infilling
+        self.use_cp = config.use_cp
 
         if config.use_cp:
             self.word_embedding = CPEmbedding(config.vocab_size, config.d_model, config.d_subembed, config.class_ranges)
@@ -800,9 +801,11 @@ class XLNet(nn.Module):
             we set reduction to "sum" to avoid nan while all elements of labels are ignore_index
             here we transform the "sum" losses to "mean" losses
             """
-            tgt_num = labels[labels != self.ignore_idx].numel()
-            d = tgt_num if tgt_num != 0 else 1
-            losses = [self.criterion(scores[i].transpose(1,2), labels[i]) / d for i in range(len(labels))]
+            losses = []
+            for i in range(len(labels)):
+                tgt_num = labels[i][labels[i] != self.ignore_idx].numel()
+                d = tgt_num if tgt_num != 0 else 1
+                losses.append(self.criterion(scores[i].transpose(1,2), labels[i]) / d)
         else:
             losses = None
 

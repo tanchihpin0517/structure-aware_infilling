@@ -477,28 +477,29 @@ class Tokenizer:
     def class_ranges(self):
         return list(self.class_tabel.values())
 
-    def pad(self, songs, val, max_seq_len, gen_mask=True, use_cp=None):
+    def pad(self, inputs, val, max_seq_len, gen_mask=True, use_cp=None):
         """
         attention mask: 0 -> not attend, 1 -> attend
         """
-        tokens = []
+        inputs = copy.deepcopy(inputs)
+        outputs = []
         masks = [] if gen_mask else None
 
         use_cp = use_cp if use_cp is not None else self.use_cp
+        use_last = True if val == "last" else False
 
-        for song in songs:
+        for tokens in inputs:
+            val = tokens[-1] if use_last else val
             if use_cp:
-                tokens.append(song[:max_seq_len] + [[val]*len(self.class_tabel) for i in range(max_seq_len-len(song))])
+                outputs.append(tokens[:max_seq_len] + [[val]*len(self.class_tabel) for i in range(max_seq_len-len(tokens))])
             else:
-                tokens.append(song[:max_seq_len] + [val for i in range(max_seq_len-len(song))])
+                outputs.append(tokens[:max_seq_len] + [val for i in range(max_seq_len-len(tokens))])
             if gen_mask:
-                masks.append([1]*len(song[:max_seq_len]) + [0 for i in range(max_seq_len-len(song))])
-        tokens = torch.LongTensor(tokens)
-        #masks = (tokens != 0).to(torch.float)
-        if gen_mask:
-            masks = torch.FloatTensor(masks)
+                masks.append([1]*len(tokens[:max_seq_len]) + [0 for i in range(max_seq_len-len(tokens))])
+        outputs = torch.LongTensor(outputs)
+        masks = torch.FloatTensor(masks) if gen_mask else None
 
-        return tokens, masks
+        return outputs, masks
 
     def get_labels(self, segs: torch.LongTensor, ignore_labels=None):
         """
