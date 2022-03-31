@@ -322,11 +322,10 @@ def save_ckpt(save_path, epoch_idx, config, model, optimizer, loss, tokenizer):
     if ckpt.loss < 1:
         torch.save(ckpt, save_path.replace("%d", str(math.floor(ckpt.loss*10))))
 
-def default_optimizer(model, lr=1e-3):
+def default_optimizer(model, lr=1e-4):
     return torch.optim.Adam(model.parameters(), lr=lr)
 
-def default_scheduler(optimizer, lr_max=1.0, lr_min=1.0, T=10, warmup=0, refine=50):
-    #lr_lambda = lambda epoch: 2 if epoch < 10 else 1
+def default_scheduler(optimizer, lr_max=1.0, lr_min=1.0, T=10, warmup=10, refine=50):
     lr_lambda = lambda epoch: (epoch+1)/warmup if epoch < warmup else \
                               lr_min + 0.5*(lr_max-lr_min)*(1.0+math.cos(epoch/T*math.pi)) if epoch < refine else lr_min
     return torch.optim.lr_scheduler.LambdaLR(optimizer=optimizer, lr_lambda=lr_lambda)
@@ -359,7 +358,8 @@ def train_transxl(model, song_ids, epoch_num, batch_size, seg_size, cuda, config
     labels = tokenizer.get_labels(song_ids, ignore_labels=ignore_labels)
 
     optimizer = default_optimizer(model, lr=1e-4)
-    scheduler = default_scheduler(optimizer, lr_max=2.0, lr_min=1.0, T=10, warmup=10, refine=50)
+    #scheduler = default_scheduler(optimizer, lr_max=2.0, lr_min=1.0, T=10, warmup=10, refine=50)
+    scheduler = default_scheduler(optimizer, lr_max=1.0, lr_min=1.0, T=10, warmup=10, refine=50)
 
     for epoch_idx in range(epoch_num):
         pbar = tqdm(desc=f"epoch {epoch_idx+1}", total=len(song_ids))
@@ -426,7 +426,8 @@ def train_xlnet(model, song_ids, bar_ids, epoch_num, batch_size, seg_size, cuda,
     tgt_labels = tokenizer.get_labels(tgt_labels)
 
     optimizer = default_optimizer(model, lr=1e-4)
-    scheduler = default_scheduler(optimizer, lr_max=2.0, lr_min=1.0, T=10, warmup=10, refine=50)
+    #scheduler = default_scheduler(optimizer, lr_max=2.0, lr_min=1.0, T=10, warmup=10, refine=50)
+    scheduler = default_scheduler(optimizer, lr_max=1.0, lr_min=1.0, T=10, warmup=10, refine=50)
 
     for epoch_idx in range(epoch_num):
         pbar = tqdm(desc=f"epoch {epoch_idx+1}", total=len(song_ids))
