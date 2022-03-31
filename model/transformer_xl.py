@@ -294,7 +294,8 @@ class TransformerXL(nn.Module):
 
         self.drop = nn.Dropout(config.dropout)
         self.softmax = nn.Softmax(dim = -1)
-        self.criterion = nn.CrossEntropyLoss(ignore_index=config.ignore_idx, reduction="mean")
+        self.criterion = nn.CrossEntropyLoss(ignore_index=config.ignore_idx, reduction="sum")
+        self.ignore_idx = config.ignore_idx
 
         self.apply(self._init_weights)
 
@@ -409,7 +410,13 @@ class TransformerXL(nn.Module):
         # torch does softmax in CrossEntropyLoss
         if labels is not None:
             assert len(labels) == len(scores)
-            losses = [self.criterion(scores[i][:, :labels[i].size(1), :].transpose(1,2), labels[i]) for i in range(len(labels))]
+            """
+            we set reduction to "sum" to avoid nan while all elements of labels are ignore_index
+            here we transform the "sum" losses to "mean" losses
+            """
+            tgt_num = labels[labels != self.ignore_idx].numel()
+            d = tgt_num if tgt_num != 0 else 1
+            losses = [self.criterion(scores[i][:, :labels[i].size(1), :].transpose(1,2), labels[i]) / d for i in range(len(labels))]
         else:
             losses = None
 

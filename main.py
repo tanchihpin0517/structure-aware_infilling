@@ -419,7 +419,7 @@ def train_xlnet(model, song_ids, bar_ids, epoch_num, batch_size, seg_size, cuda,
     # extend bar_ids to max_seq_len
     bar_ids = copy.deepcopy(bar_ids) # why not?
     for i, bid in enumerate(bar_ids):
-        bar_ids[i] = bid[:max_seq_len] + [bid[max_seq_len-1]]*(max_seq_len-len(bid))
+        bar_ids[i] = bid[:max_seq_len] + [bid[-1]]*(max_seq_len-len(bid)) # extend the last bid to padding part
     bar_ids = torch.LongTensor(bar_ids)
     assert bar_ids.shape == song_ids.shape
 
