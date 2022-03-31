@@ -328,4 +328,4 @@ if __name__ == '__main__':
     #song_sel = None
     #track_sel = ['melody', 'bridge', 'piano']
     track_sel = ['melody', 'bridge', 'piano']
-    _test_pop909("/screamlab/home/tanch/structural_expansion/pop909_test", song_sel=song_sel, track_sel=track_sel)
+    _test_pop909("/screamlab/home/tanch/structure-aware_infilling/pop909_test", song_sel=song_sel, track_sel=track_sel)
