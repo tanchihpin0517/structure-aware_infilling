@@ -27,7 +27,28 @@ def analyze(data_file):
     notes_num = np.array(notes_num)
     print(f"average notes of each song: {notes_num.mean()}")
 
+    struct_lens = []
+    error = 0
+    for song in songs:
+        count = 0
+        prev_struct = song.bars[0].struct
+        for bar in song.bars:
+            if bar.struct == prev_struct:
+                count += 1
+            else:
+                #print(prev_struct, count)
+                prev_struct = bar.struct
+                struct_lens.append(count)
+                if count > 16:
+                    print(song.name)
+                    error += 1
+                count = 0
+    struct_lens = np.array(struct_lens)
+    print(f"average length of structures in each song: {struct_lens.mean()}")
+    print(struct_lens.mean(), struct_lens.max())
+    print(error)
+
 
 if __name__ == "__main__":
-    data_file = "/screamlab/home/tanch/structural_expansion/dataset/pop909.pickle"
+    data_file = "/screamlab/home/tanch/structure-aware_infilling/dataset/pop909.pickle"
     analyze(data_file=data_file)

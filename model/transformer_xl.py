@@ -534,7 +534,7 @@ class TransformerXL(nn.Module):
 
                 tmp.extend(song[:B_start]) # A
                 tmp.append(tokenizer.eop_id())
-                seg.extend([self.seg_id_A] * (len(tmp)-len(seg)))
+                seg.extend([self.past_id()] * (len(tmp)-len(seg)))
                 if only_middle:
                     ignore.extend([1] * (len(tmp)-len(ignore)))
                 else:
@@ -543,12 +543,12 @@ class TransformerXL(nn.Module):
 
                 tmp.extend(song[B_end: -1]) # C without EOS
                 tmp.append(tokenizer.eop_id())
-                seg.extend([self.seg_id_C] * (len(tmp)-len(seg)))
+                seg.extend([self.future_id()] * (len(tmp)-len(seg)))
                 ignore.extend([1] * (len(tmp)-len(ignore)))
 
                 tmp.extend(song[B_start: B_end]) # B
                 tmp.append(song[-1]) # EOS
-                seg.extend([self.seg_id_B] * (len(tmp)-len(seg)))
+                seg.extend([self.middle_id()] * (len(tmp)-len(seg)))
                 ignore.extend([0] * (len(tmp)-len(ignore)))
 
                 song_ids[i] = tmp
@@ -556,8 +556,16 @@ class TransformerXL(nn.Module):
                 ignore_labels.append(ignore)
         else:
             for i, song in enumerate(song_ids):
-                seg_ids.append([self.seg_id_A] * len(song))
+                seg_ids.append([self.past_id()] * len(song))
                 ignore_labels.append([0] * len(song))
 
         return song_ids, seg_ids, ignore_labels
 
+    def past_id(self):
+        return self.seg_id_A
+
+    def future_id(self):
+        return self.seg_id_C
+
+    def middle_id(self):
+        return self.seg_id_B

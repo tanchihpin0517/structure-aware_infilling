@@ -58,6 +58,8 @@ def parse_args():
 def main():
     args = parse_args()
     use_cp = (not args.no_cp)
+    if args.bar_pe:
+        assert use_cp, "CP must be used while using bar positional encoding."
 
     torch.manual_seed(args.seed)
     random.seed(args.seed)
@@ -143,40 +145,35 @@ def main():
         else:
             raise Exception(f"Unknow model type: {args.model}")
 
-    if args.test:
-        ckpt = torch.load(args.ckpt_path)
-        model = TransformerXL(ckpt.config)
-        model.load_state_dict(ckpt.model_state_dict)
-        tokenizer = ckpt.tokenizer
-        print("ckpt:", "args.ckpt_path", ", epoch:", ckpt.epoch, ", loss:", ckpt.loss)
-        with torch.no_grad():
-            test(model, songs[0],
-                 args.cuda, args.seg_size, tokenizer)
-
     if args.generate:
         songs = songs_data[:args.gen_num]
         ckpt = torch.load(args.ckpt_path)
         tokenizer = ckpt.tokenizer
+
+        assert ckpt.config.use_cp == use_cp
+        assert ckpt.config.infilling == args.infilling
 
         if args.model == "transformer_xl":
             model = TransformerXL(ckpt.config)
             model.load_state_dict(ckpt.model_state_dict)
             print("ckpt:", args.ckpt_path, ", epoch:", ckpt.epoch, ", loss:", ckpt.loss)
             with torch.no_grad():
-                prompts = select_bars(songs, 0, 8)
-                prompt_ids = tokenize(prompts, tokenizer, with_eos=False)
+                past_ids, _ = tokenize(select_bars(songs, 0, 8), tokenizer, with_eos=False)
+                #future_ids, _ = tokenize(select_bars(songs, 24, 32), tokenizer, with_eos=False) if args.infilling else (None, None)
+                future_ids = None
                 result_ids = generate_transxl(
                     model,
-                    prompt_ids,
+                    past_ids,
+                    future_ids,
                     args.cuda,
                     args.seg_size,
                     tokenizer,
                     max_gen_len=args.max_gen_len
                 )
 
-                gen_song_ids = []
-                for i in range(len(prompt_ids)):
-                    gen_song_ids.append(prompt_ids[i] + result_ids[i])
+            gen_song_ids = []
+            for i in range(len(result_ids)):
+                gen_song_ids.append(past_ids[i] + result_ids[i] + (future_ids[i] if future_ids is not None else []))
 
             for i in range(len(gen_song_ids)):
                 gen_song = tokenizer.decode(tokenizer.id_to_token(gen_song_ids[i]), Song.copy(songs[i], with_content=False))
@@ -193,13 +190,14 @@ def main():
             model.load_state_dict(ckpt.model_state_dict)
             print("ckpt:", "args.ckpt_path", ", epoch:", ckpt.epoch, ", loss:", ckpt.loss)
             with torch.no_grad():
-                prompts_past = tokenize(select_bars(songs, 0, 8), tokenizer, with_eos=False)
-                #prompts_future = select_bars(songs, 24, 32)
-                prompts_future = [ [] for _ in range(len(prompts_past))]
+                past_ids, past_bar_ids = tokenize(select_bars(songs, 0, 8), tokenizer, with_eos=False)
+                future_ids, future_bar_ids = tokenize(select_bars(songs, 24, 32), tokenizer) if args.infilling else (None, None)
                 result_ids = generate_xlnet(
                     model,
-                    prompts_past,
-                    prompts_future,
+                    past_ids,
+                    past_bar_ids,
+                    future_ids,
+                    future_bar_ids,
                     args.max_gen_len,
                     args.cuda,
                     args.seg_size,
@@ -207,8 +205,8 @@ def main():
                 )
 
                 gen_song_ids = []
-                for i in range(len(prompts_past)):
-                    gen_song_ids.append(prompts_past[i] + result_ids[i] + prompts_future[i])
+                for i in range(len(past_ids)):
+                    gen_song_ids.append(past_ids[i] + result_ids[i] + future_ids[i])
 
             for i in range(len(gen_song_ids)):
                 gen_song = tokenizer.decode(tokenizer.id_to_token(gen_song_ids[i]), Song.copy(songs[i], with_content=False))
@@ -419,7 +417,6 @@ def train_xlnet(model, song_ids, bar_ids, epoch_num, batch_size, seg_size, cuda,
     if bar_ids is not None:
         bar_ids, _ = tokenizer.pad(bar_ids, "last", max_seq_len, gen_mask=False, use_cp=False)
         assert bar_ids.shape == song_ids.shape[:2]
-        assert model.use_cp, "Bar positional encoding must be used with CP."
 
     # permutation mask: 0 -> attend, 1 -> not attend
     permutation_masks, tgt_mappings, tgt_labels = model.gen_mask_and_target(song_ids, max_seq_len, max_seq_len//3, max_seq_len//3*2, only_middle=only_middle)
@@ -483,50 +480,50 @@ def train_xlnet(model, song_ids, bar_ids, epoch_num, batch_size, seg_size, cuda,
 
         save_ckpt(save_path, epoch_idx, config, model, optimizer, running_loss, tokenizer)
 
-def test(model, song, cuda, seg_size, tokenizer):
-    model.eval()
-    model = model.cuda() if cuda else model
-
-    tokens = torch.tensor(song, dtype=torch.int)
-    # limit segment length not longer than memory length
-    seg_size = model.mem_len if model.mem_len < seg_size else seg_size
-
-    print("teacher forcing")
-    mems = None
-    for seg_idx in range(0, len(song), seg_size): # split a long sequence into small segments
-        seg = tokens[seg_idx:seg_idx+seg_size][None,:]
-        if cuda:
-            seg = seg.cuda()
-        output = model(input_ids=seg, mems=mems)
-        mems = output.mems
-        output_ids = torch.argmax(output.pred_scores, dim=-1)[0]
-        print(list(map(lambda i: tokenizer[i.item()], output_ids)))
-
-    print("prompt without memory")
-    for seg_idx in range(0, len(song), seg_size): # split a long sequence into small segments
-        seg = song[seg_idx:seg_idx+seg_size]
-        output_ids = [seg[0]]
-        if cuda:
-            seg = seg.cuda()
-        for i in range(len(seg)):
-            input_ids = torch.tensor(output_ids, dtype=torch.int)[None, :]
-            output = model(input_ids=input_ids, mems=None)
-            output_ids.append(torch.argmax(output.pred_scores, dim=-1)[0][-1].item())
-        print(list(map(lambda i: tokenizer[i], output_ids)))
-
-    print("prompt with memory")
-    mems = None
-    for seg_idx in range(0, len(song), seg_size): # split a long sequence into small segments
-        seg = song[seg_idx:seg_idx+seg_size]
-        output_ids = [seg[0]]
-        if cuda:
-            seg = seg.cuda()
-        for i in range(len(seg)):
-            input_ids = torch.tensor(output_ids, dtype=torch.int)[None, -1:]
-            output = model(input_ids=input_ids, mems=mems)
-            mems = output.mems
-            output_ids.append(torch.argmax(output.pred_scores, dim=-1)[0][-1].item())
-        print(list(map(lambda i: tokenizer[i], output_ids)))
+#def test(model, song, cuda, seg_size, tokenizer):
+#    model.eval()
+#    model = model.cuda() if cuda else model
+#
+#    tokens = torch.tensor(song, dtype=torch.int)
+#    # limit segment length not longer than memory length
+#    seg_size = model.mem_len if model.mem_len < seg_size else seg_size
+#
+#    print("teacher forcing")
+#    mems = None
+#    for seg_idx in range(0, len(song), seg_size): # split a long sequence into small segments
+#        seg = tokens[seg_idx:seg_idx+seg_size][None,:]
+#        if cuda:
+#            seg = seg.cuda()
+#        output = model(input_ids=seg, mems=mems)
+#        mems = output.mems
+#        output_ids = torch.argmax(output.pred_scores, dim=-1)[0]
+#        print(list(map(lambda i: tokenizer[i.item()], output_ids)))
+#
+#    print("prompt without memory")
+#    for seg_idx in range(0, len(song), seg_size): # split a long sequence into small segments
+#        seg = song[seg_idx:seg_idx+seg_size]
+#        output_ids = [seg[0]]
+#        if cuda:
+#            seg = seg.cuda()
+#        for i in range(len(seg)):
+#            input_ids = torch.tensor(output_ids, dtype=torch.int)[None, :]
+#            output = model(input_ids=input_ids, mems=None)
+#            output_ids.append(torch.argmax(output.pred_scores, dim=-1)[0][-1].item())
+#        print(list(map(lambda i: tokenizer[i], output_ids)))
+#
+#    print("prompt with memory")
+#    mems = None
+#    for seg_idx in range(0, len(song), seg_size): # split a long sequence into small segments
+#        seg = song[seg_idx:seg_idx+seg_size]
+#        output_ids = [seg[0]]
+#        if cuda:
+#            seg = seg.cuda()
+#        for i in range(len(seg)):
+#            input_ids = torch.tensor(output_ids, dtype=torch.int)[None, -1:]
+#            output = model(input_ids=input_ids, mems=mems)
+#            mems = output.mems
+#            output_ids.append(torch.argmax(output.pred_scores, dim=-1)[0][-1].item())
+#        print(list(map(lambda i: tokenizer[i], output_ids)))
 
 def select_bars(songs, start, end):
     clipped_songs = []
@@ -534,15 +531,18 @@ def select_bars(songs, start, end):
         clipped_songs.append(song.clip(start, end))
     return clipped_songs
 
-def generate_transxl(model, prompt_ids, cuda, seg_size, tokenizer, max_gen_len):
+def generate_transxl(model, past_ids, future_ids, cuda, seg_size, tokenizer, max_gen_len):
     model.eval()
     model = model.cuda() if cuda else model
 
     result_ids = []
-    pbar = tqdm(desc="Generating", total=len(prompt_ids))
-    for prompt in prompt_ids:
+    pbar = tqdm(desc="Generating", total=len(past_ids))
+    for i in range(len(past_ids)):
         result = []
-        prompt = torch.LongTensor(prompt)
+        past = past_ids[i] + [tokenizer.eop_id()]
+        future = future_ids[i] + [tokenizer.eop_id()] if future_ids is not None else []
+        prompt = torch.LongTensor(past + future)
+        prompt_type_id = torch.LongTensor([model.past_id()] * len(past) + [model.future_id()] * len(future))
         # limit segment length not longer than memory length
         seg_size = model.mem_len if model.mem_len < seg_size else seg_size
 
@@ -553,9 +553,12 @@ def generate_transxl(model, prompt_ids, cuda, seg_size, tokenizer, max_gen_len):
         mems = None
         for seg_idx in range(0, len(prompt), seg_size): # split a long sequence into small segments
             segs = prompt[None, seg_idx:seg_idx+seg_size]
-            segs = segs.cuda() if cuda else segs
+            type_ids = prompt_type_id[None, seg_idx:seg_idx+seg_size]
 
-            output = model(input_ids=segs, mems=None)
+            segs = segs.cuda() if cuda else segs
+            type_ids = type_ids.cuda() if cuda else type_ids
+
+            output = model(input_ids=segs, token_type_ids=type_ids, mems=None)
             mems = output.mems
 
             #output_ids = torch.argmax(output.pred_scores, dim=-1)
@@ -574,9 +577,12 @@ def generate_transxl(model, prompt_ids, cuda, seg_size, tokenizer, max_gen_len):
         #output_ids = torch.argmax(output.pred_scores, dim=-1)
         while True:
             segs = gen_id[None, None]
-            segs = segs.cuda() if cuda else segs
+            type_ids = torch.LongTensor([model.middle_id()])[None]
 
-            output = model(input_ids=segs, mems=mems)
+            segs = segs.cuda() if cuda else segs
+            type_ids = type_ids.cuda() if cuda else type_ids
+
+            output = model(input_ids=segs, token_type_ids=type_ids, mems=mems)
             mems = output.mems
 
             #gen_id = torch.argmax(output.pred_scores, dim=-1)[0, -1].item()
@@ -598,16 +604,19 @@ def generate_transxl(model, prompt_ids, cuda, seg_size, tokenizer, max_gen_len):
 
     return result_ids
 
-def generate_xlnet(model, prompts_past, prompts_future, gen_len, cuda, seg_size, tokenizer):
+def generate_xlnet(model, past_ids, past_bar_ids, future_ids, future_bar_ids, gen_len, cuda, seg_size, tokenizer):
     model.eval()
     model = model.cuda() if cuda else model
 
     result_ids = []
-    #assert len(prompts_past) == len(prompts_future)
-    pbar = tqdm(desc="Generating", total=len(prompts_past))
-    for i in range(len(prompts_past)):
-        past = prompts_past[i]
-        future = prompts_future[i]
+    pbar = tqdm(desc="Generating", total=len(past_ids))
+    for i in range(len(past_ids)):
+        past = past_ids[i]
+        past_bid = past_bar_ids[i]
+        future = future_ids[i] if future_ids is not None else []
+        future_bid = future_bar_ids[i] if future_bar_ids[i] is not None else []
+
+        assert past_bid[-1] < future_bid[0]
 
         prompt = past + ([0] * gen_len) + future
 
