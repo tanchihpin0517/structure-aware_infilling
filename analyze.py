@@ -29,25 +29,22 @@ def analyze(data_file):
 
     struct_lens = []
     error = 0
+    struct_dist = {}
     for song in songs:
-        count = 0
-        prev_struct = song.bars[0].struct
-        for bar in song.bars:
-            if bar.struct == prev_struct:
-                count += 1
-            else:
-                #print(prev_struct, count)
-                prev_struct = bar.struct
-                struct_lens.append(count)
-                if count > 16:
-                    print(song.name)
-                    error += 1
-                count = 0
+        too_long = False
+        for label, start, end in song.struct_indices:
+            l = end - start
+            struct_lens.append(l)
+            struct_dist[l] = struct_dist[l] + 1 if l in struct_dist else 1
+            if l > 32:
+                too_long = True
+        if too_long:
+            error += 1
+
     struct_lens = np.array(struct_lens)
     print(f"average length of structures in each song: {struct_lens.mean()}")
-    print(struct_lens.mean(), struct_lens.max())
-    print(error)
-
+    print(f"longest struct: {struct_lens.max()}")
+    print(f"number and ratio of songs which contain at least one struct longer than 32:", error, error/len(songs))
 
 if __name__ == "__main__":
     data_file = "/screamlab/home/tanch/structure-aware_infilling/dataset/pop909.pickle"

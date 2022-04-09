@@ -38,7 +38,8 @@ def pop909(dir_origin, dir_struct, beat_division=4, N=None, song_sel=None, multi
 
 def pop_909_map_func(args):
     dir_origin, dir_struct, sub_dir, beat_division, verbose = args
-    percision = 8
+    percision = 3 # millisecond
+    max_len_of_struct = 32
     #print(sub_dir)
 
     # get original song data
@@ -82,7 +83,7 @@ def pop_909_map_func(args):
     midi_data = pretty_midi.PrettyMIDI(midi_file)
     melody, bridge, piano = midi_data.instruments
 
-    # Use beat_midi.txt to create beat events and set tempo info
+    # Create beat events with beat_midi.txt and set tempo info
     events = []
     tempo_change_times, tempi = midi_data.get_tempo_changes()
     tempo_idx = 0
@@ -196,27 +197,31 @@ def pop_909_map_func(args):
             nums.remove("")
         assert len(labels) == len(nums), "Invalid structure: %s" % line
 
+        if start_bar_idx != 0:
+            song.struct_indices.append((None, 0, start_bar_idx))
         for i in range(len(labels)):
-            try:
-                song.bars[cur_idx].struct = labels[i] # like chord, only set "anchor" here
-                cur_idx += int(nums[i])
-            except IndexError as e:
+            struct, n = labels[i], int(nums[i])
+            start, end = cur_idx, min(cur_idx+n, len(song.bars))
+            if not (start < len(song.bars) and start < end):
                 if verbose:
                     print(f"error: bar number doesn't match with structure info in {sub_dir}, return None.")
                 return None # skip if the number of bars don't match
+            else:
+                song.struct_indices.append((struct, start, end))
+                cur_idx += n
+        if end != len(song.bars):
+            song.struct_indices.append((None, end, len(song.bars)))
 
-    # extend and fill gaps between anchors of structure info
-    prev_struct = None
-    for bar in song.bars:
-        if bar.struct is None and prev_struct is not None:
-            bar.struct = prev_struct
-        prev_struct = bar.struct
+    for struct, start, end in song.struct_indices:
+        if end - start > max_len_of_struct:
+            if verbose:
+                print(f"error: the number of bars in structure is more than {max_len_of_struct} in {sub_dir}, return None.")
+            return None
+        for i in range(start, end):
+            song.bars[i].struct = struct
 
     # set bar's (start, end) and expand events to the level of 16th(depands on beat_division) notes
     for bar in song.bars:
-        #bar.start = bar.events[0].start
-        #bar.end = bar.events[-1].end
-
         tmp = []
         for i in range(len(bar.events)):
             onset = bar.events[i].start
@@ -241,8 +246,6 @@ def pop_909_map_func(args):
 
     for i in range(len(events)-1):
         assert events[i].end == events[i+1].start, f"{events[i], events[i+1]}"
-
-
 
     # add notes
     notes = []
@@ -308,7 +311,7 @@ def pop_909_map_func(args):
     return song
 
 def _test_pop909(testdir: str, song_sel: int = None, track_sel=['melody', 'bridge', 'piano'], N: int = None):
-    songs, err_cnt = pop909("./dataset/pop909/POP909", "./dataset/pop909_struct/POP909", song_sel=song_sel, N=N)
+    songs, err_cnt = pop909("./dataset/pop909/POP909", "./dataset/pop909_struct/POP909", song_sel=song_sel, N=N, multi_task=False, verbose=True)
     print("error number:", err_cnt)
 
     for song in songs:
@@ -324,7 +327,7 @@ def _test_pop909(testdir: str, song_sel: int = None, track_sel=['melody', 'bridg
             f.write(f"{song}\n")
 
 if __name__ == '__main__':
-    song_sel = 14
+    song_sel = 746
     #song_sel = None
     #track_sel = ['melody', 'bridge', 'piano']
     track_sel = ['melody', 'bridge', 'piano']

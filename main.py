@@ -31,6 +31,7 @@ def parse_args():
     parser.add_argument('--save-path', type=str, default=None)
     parser.add_argument('--ckpt-path', type=str, default=None)
     parser.add_argument('--no-cp', default=False, action='store_true')
+    parser.add_argument('--no_bar_cd', default=False, action='store_true')
     parser.add_argument('--gen-num', type=int, default=16)
     parser.add_argument('--infilling', default=False, action='store_true')
     parser.add_argument('--bar-pe', default=False, action='store_true')
@@ -57,17 +58,19 @@ def parse_args():
 
 def main():
     args = parse_args()
+
+    if args.preprocess:
+        gen_data(args.data_file, small_size=16)
+        exit()
+
     use_cp = (not args.no_cp)
+    use_bar_cd = (not args.no_bar_cd)
     if args.bar_pe:
         assert use_cp, "CP must be used while using bar positional encoding."
 
     torch.manual_seed(args.seed)
     random.seed(args.seed)
     np.random.seed(args.seed)
-
-    if args.preprocess:
-        gen_data(args.data_file, small_size=16)
-        exit()
 
     #data = load_data(args.data_file, args.preprocess, melody_only=True, max_song_num=16)
     songs_data = load_data(args.data_file, track_sel=['melody', 'bridge'])
@@ -93,6 +96,7 @@ def main():
                 n_layer = args.num_layer,
                 mem_len = args.mem_len,
                 use_cp=use_cp,
+                use_bar_cd=use_bar_cd,
                 d_subembed=args.dim_subembed,
                 class_ranges=tokenizer.class_ranges(),
                 infilling=args.infilling,
@@ -121,6 +125,7 @@ def main():
                 n_layer = args.num_layer,
                 mem_len = args.mem_len,
                 use_cp=use_cp,
+                use_bar_cd=use_bar_cd,
                 d_subembed=args.dim_subembed,
                 class_ranges=tokenizer.class_ranges(),
                 attn_type="bi",
@@ -151,16 +156,22 @@ def main():
         tokenizer = ckpt.tokenizer
 
         assert ckpt.config.use_cp == use_cp
+        assert ckpt.config.use_bar_cd == use_bar_cd
         assert ckpt.config.infilling == args.infilling
 
         if args.model == "transformer_xl":
             model = TransformerXL(ckpt.config)
             model.load_state_dict(ckpt.model_state_dict)
-            print("ckpt:", args.ckpt_path, ", epoch:", ckpt.epoch, ", loss:", ckpt.loss)
+            print("ckpt:", args.ckpt_path)
+            print("epoch:", ckpt.epoch)
+            print("loss:", ckpt.loss)
+            print("use cp:", ckpt.config.use_cp)
+            print("use bar count down:", ckpt.config.use_bar_cd)
+
             with torch.no_grad():
                 past_ids, _ = tokenize(select_bars(songs, 0, 8), tokenizer, with_eos=False)
-                #future_ids, _ = tokenize(select_bars(songs, 24, 32), tokenizer, with_eos=False) if args.infilling else (None, None)
-                future_ids = None
+                future_ids, _ = tokenize(select_bars(songs, 24, 32), tokenizer, with_eos=False) if args.infilling else (None, None)
+                #future_ids = None
                 result_ids = generate_transxl(
                     model,
                     past_ids,

@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 import pretty_midi as pmidi
-from typing import List, Optional
+from typing import List, Optional, Tuple
 import dataclasses
 import copy
 from copy import deepcopy
@@ -81,13 +81,19 @@ class Song:
     bpm: int
     bars: List[Bar] = field(default_factory=list)
 
+    # store the info of the start and end bar indices of each struct
+    struct_indices: List[Tuple[str, int, int]] = field(default_factory=list)
+
     @staticmethod
     def copy(song, with_content=True):
-        r = dataclasses.replace(song)
+        r = dataclasses.replace(
+            song,
+            bars=list(),
+            struct_indices=list(),
+        )
         if with_content:
             r.bars = deepcopy(song.bars)
-        else:
-            r.bars = []
+            r.struct_indices = deepcopy(song.struct_indices)
         return r
 
     def __repr__(self):
@@ -112,8 +118,8 @@ class Song:
         return notes
 
     def clip(self, start, end):
-        r = Song.copy(self, with_content=False)
-        r.bars = deepcopy(self.bars[start:end])
+        r = Song.copy(self)
+        r.bars = r.bars[start:end]
         return r
 
     def save(self, file):
