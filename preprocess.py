@@ -39,7 +39,6 @@ def pop909(dir_origin, dir_struct, beat_division=4, N=None, song_sel=None, multi
 def pop_909_map_func(args):
     dir_origin, dir_struct, sub_dir, beat_division, verbose = args
     percision = 3 # millisecond
-    max_len_of_struct = 32
     #print(sub_dir)
 
     # get original song data
@@ -213,10 +212,6 @@ def pop_909_map_func(args):
             song.struct_indices.append((None, end, len(song.bars)))
 
     for struct, start, end in song.struct_indices:
-        if end - start > max_len_of_struct:
-            if verbose:
-                print(f"error: the number of bars in structure is more than {max_len_of_struct} in {sub_dir}, return None.")
-            return None
         for i in range(start, end):
             song.bars[i].struct = struct
 

@@ -250,13 +250,20 @@ def gen_data(data_file, small_size=16):
             print(f"create file: {small_file}")
         pickle.dump(data[:small_size], f)
 
-def load_data(data_file, track_sel=['melody', 'bridge', 'piano'], max_song_num=None):
+def load_data(data_file, track_sel=['melody', 'bridge', 'piano'], max_song_num=None, max_struct_len=32):
     print(f"Load data: {data_file}")
     with open(data_file, 'rb') as f:
         data = pickle.load(f)
 
     if max_song_num is not None:
         data = data[:max_song_num]
+
+    tmp = []
+    for song in data:
+        for _, start, end in song.struct_indices:
+            if end - start <= max_struct_len:
+                tmp.append(song)
+    data = tmp
 
     for song in data:
         for event in song.flatten_events():
