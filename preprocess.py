@@ -39,6 +39,7 @@ def pop909(dir_origin, dir_struct, beat_division=4, N=None, song_sel=None, multi
 def pop_909_map_func(args):
     dir_origin, dir_struct, sub_dir, beat_division, verbose = args
     percision = 3 # millisecond
+    ignore_labels = ['i', 'o', 'x']
     #print(sub_dir)
 
     # get original song data
@@ -206,6 +207,8 @@ def pop_909_map_func(args):
                     print(f"error: bar number doesn't match with structure info in {sub_dir}, return None.")
                 return None # skip if the number of bars don't match
             else:
+                if struct.lower() in ignore_labels:
+                    struct = None
                 song.struct_indices.append((struct, start, end))
                 cur_idx += n
         if end != len(song.bars):

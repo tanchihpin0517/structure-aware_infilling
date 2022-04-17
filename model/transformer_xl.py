@@ -3,6 +3,7 @@ from torch import nn
 from .general import Config, Output, REMIEmbedding, CPEmbedding
 from dataclasses import dataclass
 import math
+from utils import log as ulog
 
 class PositionalEmbedding(nn.Module):
     def __init__(self, demb):
@@ -81,6 +82,9 @@ class RelPartialLearnableMultiHeadAttn(nn.Module):
         self.dropout = dropout
 
         self.qkv_net = nn.Linear(d_model, 3 * n_head * d_head, bias=False)
+        self.q_net = nn.Linear(d_model, n_head * d_head, bias=False)
+        self.k_net = nn.Linear(d_model, n_head * d_head, bias=False)
+        self.v_net = nn.Linear(d_model, n_head * d_head, bias=False)
 
         self.drop = nn.Dropout(dropout)
         self.dropatt = nn.Dropout(dropatt)
@@ -113,27 +117,28 @@ class RelPartialLearnableMultiHeadAttn(nn.Module):
 
         return x
 
-    def forward(self, w, r, attn_mask=None, mems=None, head_mask=None, output_attentions=False):
-        qlen, rlen, bsz = w.size(0), r.size(0), w.size(1)
+    def forward(self, query, content, r, attn_mask=None, mems=None, head_mask=None, output_attentions=False, add_and_norm=True):
+        qlen, rlen, bsz = query.size(0), r.size(0), query.size(1)
 
         if mems is not None:
-            cat = torch.cat([mems, w], 0)
-            if self.pre_lnorm:
-                w_heads = self.qkv_net(self.layer_norm(cat))
-            else:
-                w_heads = self.qkv_net(cat)
-            r_head_k = self.r_net(r)
+            cat = torch.cat([mems, content], 0)
 
-            w_head_q, w_head_k, w_head_v = torch.chunk(w_heads, 3, dim=-1)
-            w_head_q = w_head_q[-qlen:]
+            if add_and_norm and self.pre_lnorm:
+                query = self.layer_norm(query)
+                cat = self.layer_norm(cat)
+
+            w_head_q = self.q_net(query)
+            w_head_k = self.k_net(cat)
+            w_head_v = self.v_net(cat)
+            r_head_k = self.r_net(r)
         else:
-            if self.pre_lnorm:
-                w_heads = self.qkv_net(self.layer_norm(w))
-            else:
-                w_heads = self.qkv_net(w)
+            if add_and_norm and self.pre_lnorm:
+                query = self.layer_norm(query)
+                content = self.layer_norm(content)
+            w_head_q = self.q_net(query)
+            w_head_k = self.k_net(content)
+            w_head_v = self.v_net(content)
             r_head_k = self.r_net(r)
-
-            w_head_q, w_head_k, w_head_v = torch.chunk(w_heads, 3, dim=-1)
 
         klen = w_head_k.size(0)
 
@@ -189,12 +194,15 @@ class RelPartialLearnableMultiHeadAttn(nn.Module):
         attn_out = self.o_net(attn_vec)
         attn_out = self.drop(attn_out)
 
-        if self.pre_lnorm:
-            # residual connection
-            outputs = [w + attn_out]
+        if add_and_norm:
+            if self.pre_lnorm:
+                # residual connection
+                outputs = [query + attn_out]
+            else:
+                # residual connection + layer normalization
+                outputs = [self.layer_norm(query + attn_out)]
         else:
-            # residual connection + layer normalization
-            outputs = [self.layer_norm(w + attn_out)]
+            outputs = [attn_out]
 
         if output_attentions:
             outputs.append(attn_prob)
@@ -209,25 +217,95 @@ class RelPartialLearnableDecoderLayer(nn.Module):
         self.dec_attn = RelPartialLearnableMultiHeadAttn(
             n_head, d_model, d_head, dropout, layer_norm_epsilon=layer_norm_epsilon, **kwargs
         )
+        self.cross_attn = RelPartialLearnableMultiHeadAttn(
+            n_head, d_model, d_head, dropout, layer_norm_epsilon=layer_norm_epsilon, **kwargs
+        )
+
+        self.layer_norm = nn.LayerNorm(d_model, eps=layer_norm_epsilon)
+
         self.pos_ff = PositionwiseFF(
             d_model, d_inner, dropout, pre_lnorm=kwargs.get("pre_lnorm"), layer_norm_epsilon=layer_norm_epsilon
         )
 
-    def forward(self, dec_inp, r, dec_attn_mask=None, mems=None, head_mask=None, output_attentions=False):
+    def forward(self, dec_inp, dec_r, dec_attn_mask=None, enc_inp=None, enc_r=None, enc_attn_mask=None, enc_out_sel=None, enc_out_mask=None, mems=None, head_mask=None, output_attentions=False):
 
+        # self attention
         attn_outputs = self.dec_attn(
             dec_inp,
-            r,
+            dec_inp,
+            dec_r,
             attn_mask=dec_attn_mask,
             mems=mems,
             head_mask=head_mask,
             output_attentions=output_attentions,
         )
+
+        if enc_inp is not None:
+            assert enc_r is not None
+            assert enc_out_sel is not None
+
+            enc_attn_outs = []
+            for i in range(enc_inp.shape[0]):
+                # cross attention
+                outs = self.dec_attn(
+                    attn_outputs[0],
+                    enc_inp[i],
+                    enc_r,
+                    attn_mask=enc_attn_mask[i] if enc_attn_mask is not None else None,
+                    mems=None,
+                    head_mask=head_mask,
+                    output_attentions=output_attentions,
+                    add_and_norm=False,
+                )
+
+                enc_attn_outs.append(outs[0])
+
+            enc_attn_outs = torch.stack(enc_attn_outs)
+            #enc_out_sel = enc_out_sel.clone().detach()
+            #if enc_out_mask is not None:
+            #    enc_out_sel[enc_out_mask == 1] = 0 # each sel with -1 shound be masked
+            enc_out_sel = enc_out_sel[None, :, :, None].expand(enc_attn_outs.shape[0], -1, -1, enc_attn_outs.shape[-1])
+            enc_attn_outs = torch.gather(enc_attn_outs, 0, enc_out_sel)[0]
+
+            if enc_out_mask is not None:
+                enc_out_mask = enc_out_mask[:, :, None]
+                enc_attn_outs = enc_attn_outs.masked_fill(enc_out_mask > 0, 0)
+
+            attn_outputs[0] = self.layer_norm(attn_outputs[0] + enc_attn_outs)
+
+        # feed forward
         ff_output = self.pos_ff(attn_outputs[0])
 
         outputs = [ff_output] + attn_outputs[1:]
 
         return outputs
+
+#class RelPartialLearnableEncoderLayer(nn.Module):
+#    def __init__(self, n_head, d_model, d_head, d_inner, dropout, layer_norm_epsilon=1e-5, **kwargs):
+#        super().__init__()
+#
+#        self.enc_attn = RelPartialLearnableMultiHeadAttn(
+#            n_head, d_model, d_head, dropout, layer_norm_epsilon=layer_norm_epsilon, **kwargs
+#        )
+#        self.pos_ff = PositionwiseFF(
+#            d_model, d_inner, dropout, pre_lnorm=kwargs.get("pre_lnorm"), layer_norm_epsilon=layer_norm_epsilon
+#        )
+#
+#    def forward(self, enc_inp, r, enc_attn_mask=None, mems=None, head_mask=None, output_attentions=False):
+#
+#        attn_outputs = self.enc_attn(
+#            enc_inp,
+#            r,
+#            attn_mask=enc_attn_mask,
+#            mems=mems,
+#            head_mask=head_mask,
+#            output_attentions=output_attentions,
+#        )
+#        ff_output = self.pos_ff(attn_outputs[0])
+#
+#        outputs = [ff_output] + attn_outputs[1:]
+#
+#        return outputs
 
 @dataclass
 class TransformerXLConfig(Config):
@@ -310,6 +388,10 @@ class TransformerXL(nn.Module):
     def forward(
         self,
         input_ids,
+        struct_ids,
+        struct_masks,
+        struct_seqs,
+        struct_seq_masks,
         mems=None,
         labels=None,
         head_mask=None,
@@ -319,10 +401,16 @@ class TransformerXL(nn.Module):
         return_dict=True,
     ):
         input_ids = input_ids.transpose(0, 1).contiguous()
+        struct_ids = struct_ids.transpose(0, 1).contiguous()
+        struct_masks = struct_masks.transpose(0, 1).contiguous()
         if self.use_cp:
-            qlen, bsz, cls_num = input_ids.size()
+            struct_seqs = struct_seqs.permute(1, 2, 0, 3).contiguous()
         else:
-            qlen, bsz = input_ids.size()
+            struct_seqs = struct_seqs.permute(1, 2, 0).contiguous()
+        struct_seq_masks = struct_seq_masks.permute(1, 2, 0).contiguous()
+
+        qlen, bsz = input_ids.shape[:2]
+        slen = struct_seqs.shape[1]
 
         if mems is None:
             mems = self._init_mems(bsz)
@@ -344,10 +432,7 @@ class TransformerXL(nn.Module):
         else:
             head_mask = [None] * self.n_layer
 
-        try:
-            word_emb = self.word_emb(input_ids)
-        except IndexError:
-            raise IndexError('Vocabulary size of model and input are not matched.')
+        word_emb = self.word_emb(input_ids)
 
         if token_type_ids is not None:
             token_type_ids = token_type_ids.transpose(0, 1).contiguous()
@@ -372,8 +457,22 @@ class TransformerXL(nn.Module):
             pos_seq.clamp_(max=self.clamp_len)
         pos_emb = self.pos_emb(pos_seq)
 
+        # struct
+        struct_emb = self.word_emb(struct_seqs)
+
+        struct_seq_masks = struct_seq_masks[:, None, :, :].expand(-1, qlen, -1, -1)
+
+        struct_pos_seq = torch.arange(slen-1, -1, -1.0, device=struct_emb.device, dtype=struct_emb.dtype)
+        struct_pos_emb = self.pos_emb(struct_pos_seq)
+
+        if struct_masks is not None:
+            struct_ids[struct_masks == 1] = 0 # each sel with -1 shound be masked
+
         core_out = self.drop(word_emb + seg_emb) if seg_emb is not None else self.drop(word_emb)
         pos_emb = self.drop(pos_emb)
+        struct_emb = self.drop(struct_emb)
+        struct_pos_emb = self.drop(struct_pos_emb)
+
 
         for i, layer in enumerate(self.layers):
             hids.append(core_out)
@@ -382,6 +481,11 @@ class TransformerXL(nn.Module):
                 core_out,
                 pos_emb,
                 dec_attn_mask=dec_attn_mask,
+                enc_inp=struct_emb,
+                enc_r=struct_pos_emb,
+                enc_attn_mask=struct_seq_masks,
+                enc_out_sel=struct_ids,
+                enc_out_mask=struct_masks,
                 mems=mems_i,
                 head_mask=head_mask[i],
                 output_attentions=output_attentions,
@@ -512,7 +616,7 @@ class TransformerXL(nn.Module):
 
         return new_mems
 
-    def permute(self, song_ids: list, B_start_ratio: float, B_end_ratio: float, tokenizer, only_middle=False):
+    def permute(self, song_ids: list, struct_ids: list, struct_indices: list, B_start_ratio: float, B_end_ratio: float, tokenizer, only_middle=False):
         """
         song_ids should not be padded
         for *_ratio, use ratio because the lengths of each song are not the same
@@ -525,15 +629,19 @@ class TransformerXL(nn.Module):
 
         if self.infilling:
             for i, song in enumerate(song_ids):
+                struct = struct_ids[i]
                 B_start = math.floor(len(song) * B_start_ratio)
                 B_end = math.floor(len(song) * B_end_ratio)
                 assert B_start != B_end
                 tmp = []
+                s_tmp = []
+                si_tmp = []
                 seg = []
                 ignore = []
 
-                tmp.extend(song[:B_start]) # A
-                tmp.append(tokenizer.eop_id())
+                tmp.extend(song[:B_start] + [tokenizer.eop_id()]) # A
+                s_tmp.extend(struct[:B_start] + [tokenizer.NONE_ID])
+                si_tmp.extend(struct_indices[:B_start] + [tokenizer.NONE_ID])
                 seg.extend([self.past_id()] * (len(tmp)-len(seg)))
                 if only_middle:
                     ignore.extend([1] * (len(tmp)-len(ignore)))
@@ -541,17 +649,21 @@ class TransformerXL(nn.Module):
                     ignore.extend([0] * (len(tmp)-len(ignore)))
                     ignore[-1] = 1 # EOP
 
-                tmp.extend(song[B_end: -1]) # C without EOS
-                tmp.append(tokenizer.eop_id())
+                tmp.extend(song[B_end: -1] + [tokenizer.eop_id()]) # C without EOS
+                s_tmp.extend(struct[B_end: -1] + [tokenizer.NONE_ID])
+                si_tmp.extend(struct_indices[B_end: -1] + [tokenizer.NONE_ID])
                 seg.extend([self.future_id()] * (len(tmp)-len(seg)))
                 ignore.extend([1] * (len(tmp)-len(ignore)))
 
-                tmp.extend(song[B_start: B_end]) # B
-                tmp.append(song[-1]) # EOS
+                tmp.extend(song[B_start: B_end] + [song[-1]]) # B + EOS
+                s_tmp.extend(struct[B_start: B_end] + [tokenizer.NONE_ID])
+                si_tmp.extend(struct_indices[B_start: B_end] + [tokenizer.NONE_ID])
                 seg.extend([self.middle_id()] * (len(tmp)-len(seg)))
                 ignore.extend([0] * (len(tmp)-len(ignore)))
 
                 song_ids[i] = tmp
+                struct_ids[i] = s_tmp
+                struct_indices[i] = s_tmp
                 seg_ids.append(seg)
                 ignore_labels.append(ignore)
         else:
@@ -559,7 +671,7 @@ class TransformerXL(nn.Module):
                 seg_ids.append([self.past_id()] * len(song))
                 ignore_labels.append([0] * len(song))
 
-        return song_ids, seg_ids, ignore_labels
+        return song_ids, struct_ids, struct_indices, seg_ids, ignore_labels
 
     def past_id(self):
         return self.seg_id_A

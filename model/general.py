@@ -21,6 +21,7 @@ class Config:
     d_subembed: int = -1
     class_ranges: List[tuple] = None
     infilling: bool = True
+    struct_len: int = 1024
 
 @dataclass
 class Checkpoint:
@@ -28,7 +29,8 @@ class Checkpoint:
     config: Config
     model_state_dict: dict
     optim_state_dict: dict
-    loss: float
+    training_loss: float
+    validation_loss: float
     tokenizer: Tokenizer
 
 @dataclass
@@ -79,14 +81,14 @@ class CPEmbedding(Embedding):
 
     def forward(self, input_ids: torch.LongTensor) -> torch.FloatTensor:
         """
-        input_ids: (B, L, C)
-            B: batch size
+        input_ids: (L, B, C)
             L: sequence length
+            B: batch size
             C: number of classes
         """
-        B, L, C = input_ids.shape
         out = self.subembed(input_ids)
-        out = out.view(B, L, C*self.d_subembed)
+        #out = out.view(B, L, C*self.d_subembed)
+        out = out.view(input_ids.shape[:-1] + (input_ids.shape[-1]*self.d_subembed,))
         out = self.trans_forward(self.drop(out))
         return out
 

@@ -7,6 +7,7 @@ import torch
 import numpy as np
 from collections import OrderedDict
 import utils
+from utils import log as ulog
 
 class Tokenizer:
 
@@ -24,6 +25,7 @@ class Tokenizer:
     DURATION = "Duration"
     STRUCT = "Struct"
     NONE = "None"
+    NONE_ID = -1
 
     def bar(self, key):
         return f"{self.BAR}({key})"
@@ -66,6 +68,7 @@ class Tokenizer:
         self.tempo_tick_num = 47
         self.vel_base = 0
         self.vel_tick_num=33
+        self.struct_num = 8
 
         #if vocab_file is None:
         #    self._init_vocab()
@@ -187,7 +190,7 @@ class Tokenizer:
 
         struct.extend([self.struct(self.NONE)])
         #struct.extend([self.struct(l) for l in [self.BAR, self.BOS, self.EOS]])
-        struct.extend([self.struct(l) for l in range(16)])
+        struct.extend([self.struct(l) for l in range(self.struct_num)])
         self.class_tabel[self.STRUCT] = (offset, offset+len(struct))
         tokens.extend(struct)
         offset = len(tokens)
@@ -196,8 +199,10 @@ class Tokenizer:
             self.token_to_id_tabel[token] = i
             self.id_to_token_tabel.append(token)
 
-    def encode(self, song: Song, with_eos=True) -> Tuple[list, list]:
+    def encode(self, song: Song, with_eos=True):
         bar_id = []
+        struct_id = []
+        struct_index = []
         bar_count = 0
 
         tokens = []
@@ -214,25 +219,31 @@ class Tokenizer:
         else:
             tokens.append(self.bar(self.BOS))
         bar_id.append(bar_count) # bos is not a new bar
+        struct_id.append(self.NONE_ID)
+        struct_index.append(0)
 
         struct_count = 0
         struct_map = OrderedDict()
-        last_struct = None
 
         for s_label, s_start, s_end in song.struct_indices:
             s_len = s_end - s_start
+
+            if s_label is None:
+                struct = self.struct(self.NONE)
+                sid = self.NONE_ID
+            else:
+                if s_label not in struct_map:
+                    struct_map[s_label] = struct_count
+                    struct_count += 1
+                struct = self.struct(struct_map[s_label])
+                sid = struct_map[s_label]
+            sidx = struct_index[-1] + 1
+
             for bar_i, bar in enumerate(song.bars[s_start:s_end]):
                 ## skip empty bar
                 #if bar.empty():
                 #    continue
 
-                if s_label is None:
-                    struct = self.struct(self.NONE)
-                else:
-                    if s_label not in struct_map:
-                        struct_map[s_label] = self.struct(struct_count)
-                        struct_count += 1
-                    struct = struct_map[s_label]
 
                 # bar
                 if self.use_cp:
@@ -248,10 +259,14 @@ class Tokenizer:
                     tokens.append(self.bar(s_len-bar_i) if self.use_bar_cd else self.bar(1))
                 bar_id.append(bar_count)
                 bar_count += 1
+                struct_id.append(sid)
+                struct_index.append(sidx)
 
                 if not self.use_cp:
                     tokens.append(struct)
                     bar_id.append(bar_count)
+                    struct_id.append(sid)
+                    struct_index.append(sidx)
 
                 # note
                 for event in bar.events:
@@ -274,6 +289,8 @@ class Tokenizer:
                                            struct
                             ])
                             bar_id.append(bar_count)
+                            struct_id.append(sid)
+                            struct_index.append(sidx)
                         else:
                             tokens.extend([
                                 self.tempo(tempo),
@@ -282,7 +299,9 @@ class Tokenizer:
                                 #self.vel(vel),
                                 self.dur(dur),
                             ])
-                            bar_id.extend([bar_count]*4)
+                            bar_id.extend([bar_count] * 4)
+                            struct_id.extend([sid] * 4)
+                            struct_index.extend([sidx] * 4)
 
         if with_eos:
             if self.use_cp:
@@ -292,14 +311,16 @@ class Tokenizer:
                                self.pitch(self.BAR),
                                #self.vel(self.BAR),
                                self.dur(self.BAR),
-                               struct_map[last_struct]
+                               self.struct(self.NONE),
                 ])
             else:
                 tokens.append(self.bar(self.EOS))
             bar_id.append(bar_count)
+            struct_id.append(self.NONE_ID)
+            struct_index.append(struct_index[-1] + 1)
 
-        assert len(tokens) == len(bar_id)
-        return tokens, bar_id
+        assert len(tokens) == len(bar_id) == len(struct_id) == len(struct_index)
+        return tokens, bar_id, struct_id, struct_index
 
     def decode(self, tokens, empty_song: Song) -> Song:
         assert len(empty_song.bars) == 0
@@ -538,6 +559,68 @@ class Tokenizer:
                         self[token[4]] != self.dur(self.BAR))
         else:
             return True # always legal while not using cp
+
+    def extract_struct(self, song_ids, struct_ids, struct_indices, max_struct_len=512):
+        if self.use_cp:
+            dim = (len(song_ids), self.struct_num, max_struct_len, len(self.class_tabel))
+        else:
+            dim = (len(song_ids), self.struct_num, max_struct_len)
+        struct_seqs = torch.zeros(dim).long()
+        struct_seq_masks = torch.zeros((len(song_ids), self.struct_num, max_struct_len))
+        """
+        mask:
+            0 => attend
+            1 => not attend
+        struct_masks: mask to indicate whether doing cross attention to struct sequence for each input token
+        """
+        struct_masks = []
+        struct_lens = []
+
+        for i in range(len(song_ids)):
+            song_id = song_ids[i]
+            struct_id = struct_ids[i]
+            struct_index = struct_indices[i]
+            assert len(song_id) == len(struct_id) == len(struct_index)
+
+            s_start = 0
+            appear = set()
+            mask = []
+            while s_start < len(struct_index):
+                s_end = s_start
+                while s_end < len(struct_index) and struct_index[s_end] == struct_index[s_start]:
+                    s_end += 1
+
+                sid = struct_id[s_start]
+                slen = s_end - s_start
+
+                """
+                input tokens should not attend to struct sequnces which appear at the first time
+                """
+                if sid == self.NONE_ID or sid not in appear:
+                    mask.extend([1] * slen)
+                else:
+                    mask.extend([0] * slen)
+
+                if sid != self.NONE_ID and sid not in appear:
+                    appear.add(sid)
+                    pad = [0] * len(self.class_tabel) if self.use_cp else 0
+                    seq = torch.LongTensor(song_id[s_start:s_end] + [pad]*(max_struct_len-slen))
+                    seq_mask = torch.FloatTensor([0]*(min(slen, max_struct_len)) + [1]*(max_struct_len-slen))
+
+                    struct_seqs[i][sid] = seq[:max_struct_len]
+                    struct_seq_masks[i][sid] = seq_mask
+                    struct_lens.append(slen)
+
+                s_start = s_end
+            assert len(song_id) == len(mask)
+            struct_masks.append(mask)
+
+        struct_lens = np.array(struct_lens)
+        ulog("mean of struct length:", struct_lens.mean())
+        ulog("mean + 2*std of struct length:", struct_lens.mean() + 2*struct_lens.std())
+        ulog("max of struct length:", struct_lens.max())
+
+        return struct_seqs, struct_seq_masks, struct_masks
 
 if __name__ == "__main__":
     pass

@@ -12,3 +12,4 @@ train*.sh
 test*.sh
 generate*.sh
 pop909_test/
+/log*

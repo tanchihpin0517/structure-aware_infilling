@@ -17,6 +17,7 @@ import random
 import multiprocessing as mp
 from typing import Tuple
 import copy
+from utils import log as ulog
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -30,14 +31,14 @@ def parse_args():
     parser.add_argument('--preprocess', default=False, action='store_true')
     parser.add_argument('--save-path', type=str, default=None)
     parser.add_argument('--ckpt-path', type=str, default=None)
-    parser.add_argument('--no-cp', default=False, action='store_true')
+    parser.add_argument('--cp', default=False, action='store_true')
     parser.add_argument('--no_bar_cd', default=False, action='store_true')
     parser.add_argument('--gen-num', type=int, default=16)
     parser.add_argument('--infilling', default=False, action='store_true')
     parser.add_argument('--bar-pe', default=False, action='store_true')
 
     parser.add_argument('--batch-size', type=int, default=1)
-    parser.add_argument('--seg-size', type=int, default=1024)
+    parser.add_argument('--seg-size', type=int, default=2048)
     parser.add_argument('--epoch-num', type=int, default=1, help='number of training epochs')
     parser.add_argument('--accm-step', type=int, default=1)
     parser.add_argument('--max-seq-len', type=int, default=None)
@@ -50,7 +51,8 @@ def parse_args():
     parser.add_argument('--dim-subembed', type=int, default=128)
     parser.add_argument('--num-head', type=int, default=8)
     parser.add_argument('--num-layer', type=int, default=8)
-    parser.add_argument('--mem-len', type=int, default=1024) # default is same as seg_size
+    parser.add_argument('--mem-len', type=int, default=2048) # default is same as seg_size
+    parser.add_argument('--struct-len', type=int, default=2048)
 
     parser.add_argument('--training-split-ratio', type=int, default=9)
     parser.add_argument('--max-gen-len', type=int, default=4096, help='number of tokens in generation')
@@ -58,15 +60,17 @@ def parse_args():
 
 def main():
     args = parse_args()
+    utils.enable_log()
+    utils.set_log_file("log.txt")
+    #torch.autograd.set_detect_anomaly(True)
 
     if args.preprocess:
         gen_data(args.data_file, small_size=16)
         exit()
 
-    use_cp = (not args.no_cp)
     use_bar_cd = (not args.no_bar_cd)
     if args.bar_pe:
-        assert use_cp, "CP must be used while using bar positional encoding."
+        assert args.cp, "CP must be used while using bar positional encoding."
 
     torch.manual_seed(args.seed)
     random.seed(args.seed)
@@ -79,13 +83,8 @@ def main():
     if args.train:
         utils.check_save_path(args.save_path)
 
-        tokenizer = Tokenizer(args.vocab_file, use_cp=use_cp)
-        song_ids, bar_ids = tokenize(songs_data, tokenizer)
-
-        assert len(song_ids) == len(bar_ids)
-        sp = len(song_ids)*(10-args.training_split_ratio)//10
-        training_song_ids = song_ids[sp:]
-        training_bar_ids = bar_ids[sp:]
+        tokenizer = Tokenizer(args.vocab_file, use_cp=args.cp)
+        song_ids, bar_ids, struct_ids, struct_indices = tokenize(songs_data, tokenizer)
 
         if args.model == "transformer_xl":
             config = TransformerXLConfig(
@@ -95,7 +94,8 @@ def main():
                 n_head = args.num_head,
                 n_layer = args.num_layer,
                 mem_len = args.mem_len,
-                use_cp=use_cp,
+                struct_len = args.struct_len,
+                use_cp=args.cp,
                 use_bar_cd=use_bar_cd,
                 d_subembed=args.dim_subembed,
                 class_ranges=tokenizer.class_ranges(),
@@ -104,7 +104,9 @@ def main():
             model = TransformerXL(config)
             train_transxl(
                 model,
-                training_song_ids,
+                song_ids,
+                struct_ids,
+                struct_indices,
                 args.epoch_num,
                 args.batch_size,
                 args.seg_size,
@@ -112,6 +114,7 @@ def main():
                 config,
                 tokenizer,
                 args.save_path,
+                split_ratio=args.training_split_ratio,
                 accm_step=args.accm_step,
                 max_seq_len=args.max_seq_len,
                 only_middle=args.only_middle,
@@ -124,7 +127,7 @@ def main():
                 n_head = args.num_head,
                 n_layer = args.num_layer,
                 mem_len = args.mem_len,
-                use_cp=use_cp,
+                use_cp=args.cp,
                 use_bar_cd=use_bar_cd,
                 d_subembed=args.dim_subembed,
                 class_ranges=tokenizer.class_ranges(),
@@ -155,7 +158,7 @@ def main():
         ckpt = torch.load(args.ckpt_path)
         tokenizer = ckpt.tokenizer
 
-        assert ckpt.config.use_cp == use_cp
+        assert ckpt.config.use_cp == args.cp
         assert ckpt.config.use_bar_cd == use_bar_cd
         assert ckpt.config.infilling == args.infilling
 
@@ -250,7 +253,7 @@ def gen_data(data_file, small_size=16):
             print(f"create file: {small_file}")
         pickle.dump(data[:small_size], f)
 
-def load_data(data_file, track_sel=['melody', 'bridge', 'piano'], max_song_num=None, max_struct_len=32):
+def load_data(data_file, track_sel=['melody', 'bridge', 'piano'], max_song_num=None, max_bar_num=32):
     print(f"Load data: {data_file}")
     with open(data_file, 'rb') as f:
         data = pickle.load(f)
@@ -260,9 +263,12 @@ def load_data(data_file, track_sel=['melody', 'bridge', 'piano'], max_song_num=N
 
     tmp = []
     for song in data:
+        too_long = False
         for _, start, end in song.struct_indices:
-            if end - start <= max_struct_len:
-                tmp.append(song)
+            if end - start > max_bar_num:
+                too_long = True
+        if not too_long:
+            tmp.append(song)
     data = tmp
 
     for song in data:
@@ -275,9 +281,11 @@ def load_data(data_file, track_sel=['melody', 'bridge', 'piano'], max_song_num=N
 
     return data
 
-def tokenize(songs_data, tokenizer, with_eos=True) -> Tuple[list, list]:
+def tokenize(songs_data, tokenizer, with_eos=True):
     songs = []
     bar_ids = []
+    struct_ids = []
+    struct_indices = []
 
     with mp.Pool() as pool:
         map_args = []
@@ -285,58 +293,22 @@ def tokenize(songs_data, tokenizer, with_eos=True) -> Tuple[list, list]:
             map_args.append((song, tokenizer, with_eos))
 
         pbar = tqdm(desc="Tokenize", total=len(songs_data))
-        for i, (song, bar_id) in enumerate(pool.imap(tokenize_map, map_args)):
+        for i, (song, bar_id, struct_id, struct_index) in enumerate(pool.imap(tokenize_map, map_args)):
             assert len(song) == len(bar_id), f"song {songs_data[i].name}: len(song, bar_id) = ({len(song)}, {len(bar_id)})"
             songs.append(song)
             bar_ids.append(bar_id)
+            struct_ids.append(struct_id)
+            struct_indices.append(struct_index)
             pbar.update(1)
         pbar.close()
 
-    return songs, bar_ids
+    return songs, bar_ids, struct_ids, struct_indices
 
 def tokenize_map(args):
     song, tokenizer, with_eos = args
-    song, bar_id = tokenizer.encode(song, with_eos=with_eos)
+    song, bar_id, struct_id, struct_index = tokenizer.encode(song, with_eos=with_eos)
     song = tokenizer.token_to_id(song)
-    return song, bar_id
-
-def get_max_seq_len(songs, verbose=True):
-    song_lens = np.array(list(map(lambda s: len(s), songs)))
-    mean = song_lens.mean()
-    sd = song_lens.var() ** 0.5
-    max_seq_len = int(mean + 2*sd)
-    if verbose:
-        print("mean:", song_lens.mean())
-        print("standard deviation:", song_lens.var()**0.5)
-        print("max sequence length:", song_lens.max())
-        match = song_lens[song_lens < max_seq_len]
-        print("set max sequence length to:", f"{max_seq_len},",
-              f"including {len(match)} songs of total ({round(len(match)/len(song_lens)*100, 2)}%)")
-    return max_seq_len
-
-def to_tensor_with_zero_padding(songs, max_seq_len):
-    tokens = []
-    #masks = []
-    for song in songs:
-        tokens.append(song[:max_seq_len] + [0 for i in range(max_seq_len-len(song))])
-        #masks.append([1]*len(song[:max_seq_len]) + [0 for i in range(max_seq_len-len(song))])
-    tokens = torch.LongTensor(tokens)
-    masks = (tokens != 0).to(torch.float)
-    #masks = torch.FloatTensor(masks)
-
-    return tokens, masks
-
-def save_ckpt(save_path, epoch_idx, config, model, optimizer, loss, tokenizer):
-    ckpt = Checkpoint(
-        epoch = epoch_idx,
-        config = config,
-        model_state_dict = model.state_dict(),
-        optim_state_dict = optimizer.state_dict(),
-        loss = loss,
-        tokenizer = tokenizer,
-    )
-    if ckpt.loss < 1:
-        torch.save(ckpt, save_path.replace("%d", str(math.floor(ckpt.loss*10))))
+    return song, bar_id, struct_id, struct_index
 
 def default_optimizer(model, lr=1e-4):
     return torch.optim.Adam(model.parameters(), lr=lr)
@@ -346,24 +318,56 @@ def default_scheduler(optimizer, lr_max=1.0, lr_min=1.0, T=10, warmup=10, refine
                               lr_min + 0.5*(lr_max-lr_min)*(1.0+math.cos(epoch/T*math.pi)) if epoch < refine else lr_min
     return torch.optim.lr_scheduler.LambdaLR(optimizer=optimizer, lr_lambda=lr_lambda)
 
-def train_transxl(model, song_ids, epoch_num, batch_size, seg_size, cuda, config, tokenizer, save_path, accm_step=1, max_seq_len=None, only_middle=False):
-    model.train()
+def train_transxl(
+    model,
+    song_ids,
+    struct_ids,
+    struct_indices,
+    epoch_num,
+    batch_size,
+    seg_size,
+    cuda,
+    config,
+    tokenizer,
+    save_path,
+    split_ratio=None,
+    accm_step=1,
+    max_seq_len=None,
+    only_middle=False,
+    enable_validation=True,
+):
     model = model.cuda() if cuda else model
+    split_idx = len(song_ids)*(10-split_ratio)//10 if split_ratio is not None else 0
 
     # permute songs before count max sequence length because permutation will add 2 segment tokens into songs
-    song_ids, seg_ids, ignore_labels = model.permute(song_ids, 1/3, 2/3, tokenizer, only_middle=only_middle)
+    song_ids, struct_ids, struct_indices, seg_ids, ignore_labels = \
+        model.permute(song_ids, struct_ids, struct_indices, 1/3, 2/3, tokenizer, only_middle=only_middle)
+
+    """
+    struct_masks: mask to indicate whether doing cross attention to struct sequence for each input token
+        0 => attend
+        1 => not attend
+    """
+    struct_seqs, struct_seq_masks, struct_masks = tokenizer.extract_struct(song_ids, struct_ids, struct_indices,)
+    struct_seqs = struct_seqs.to(model.device)
+    struct_seq_masks = struct_seq_masks.to(model.device)
 
     """
     To reduce training time, we set the max sequence length to (mean + 2*standard_deviation)
     """
     if max_seq_len is None:
-        max_seq_len = get_max_seq_len(song_ids)
+        max_seq_len = utils.get_max_seq_len(song_ids)
     else:
         print(f"max sequence length is set to {max_seq_len}")
 
     song_ids, _ = tokenizer.pad(song_ids, 0, max_seq_len, gen_mask=False)
     seg_ids, _ = tokenizer.pad(seg_ids, 0, max_seq_len, gen_mask=False, use_cp=False)
     ignore_labels, _ = tokenizer.pad(ignore_labels, 0, max_seq_len, gen_mask=False, use_cp=False)
+
+    struct_ids, _ = tokenizer.pad(struct_ids, tokenizer.NONE_ID, max_seq_len, gen_mask=False, use_cp=False)
+    #struct_ids[struct_ids == tokenizer.NONE_ID] = 0 # set NONE_ID (-1) to 0
+    struct_masks, _ = tokenizer.pad(struct_masks, 1, max_seq_len, gen_mask=False, use_cp=False)
+    struct_masks = struct_masks.float()
 
     """
     if use_cp:
@@ -378,20 +382,29 @@ def train_transxl(model, song_ids, epoch_num, batch_size, seg_size, cuda, config
     scheduler = default_scheduler(optimizer, lr_max=1.0, lr_min=1.0, T=10, warmup=10, refine=50)
 
     for epoch_idx in range(epoch_num):
-        pbar = tqdm(desc=f"epoch {epoch_idx+1}", total=len(song_ids))
-        running_loss = 0.0
+        model.train()
+        pbar = tqdm(desc=f"epoch {epoch_idx+1}", total=len(song_ids)-split_idx)
+        total_loss = 0.0
         n_tokens = 0
 
-        for batch_step, batch_idx in enumerate(range(0, len(song_ids), batch_size)):
-            batch = song_ids[batch_idx:batch_idx+batch_size]
+        for batch_step, batch_idx in enumerate(range(split_idx, len(song_ids), batch_size)):
+            bs, be = batch_idx, batch_idx+batch_size
+            batch = song_ids[bs:be]
             mems = None
             for seg_idx in range(0, max_seq_len, seg_size): # split a long sequence into small segments
-                songs_batch = song_ids[batch_idx:batch_idx+batch_size, seg_idx:seg_idx+seg_size].to(model.device)
-                labels_batch = labels[:, batch_idx:batch_idx+batch_size, seg_idx+1:seg_idx+seg_size+1].to(model.device)
-                type_batch = seg_ids[batch_idx:batch_idx+batch_size, seg_idx:seg_idx+seg_size].to(model.device)
+                ss, se = seg_idx, seg_idx+seg_size
+                songs_batch = song_ids[bs:be, ss:se].to(model.device)
+                labels_batch = labels[:, bs:be, ss+1:se+1].to(model.device)
+                type_batch = seg_ids[bs:be, ss:se].to(model.device)
+                sid_batch = struct_ids[bs:be, ss:se].to(model.device)
+                smask_batch = struct_masks[bs:be, ss:se].to(model.device)
 
                 output = model(
                     input_ids=songs_batch,
+                    struct_ids=sid_batch,
+                    struct_masks=smask_batch,
+                    struct_seqs=struct_seqs[bs:be].to(model.device),
+                    struct_seq_masks=struct_seq_masks[bs:be].to(model.device),
                     mems=mems,
                     labels=labels_batch,
                     token_type_ids=type_batch,
@@ -402,7 +415,7 @@ def train_transxl(model, song_ids, epoch_num, batch_size, seg_size, cuda, config
                 mems = output.mems
 
                 n = len(labels[labels != tokenizer.ignore_idx])
-                running_loss += loss.item() * n
+                total_loss += loss.item() * n
                 n_tokens += n
 
             if (batch_step+1) % accm_step == 0:
@@ -412,11 +425,55 @@ def train_transxl(model, song_ids, epoch_num, batch_size, seg_size, cuda, config
             pbar.update(len(batch))
         pbar.close()
 
-        running_loss = running_loss / n_tokens
-        print(" "*4, "average loss:", running_loss, " "*4, "learning rate:", scheduler.get_last_lr()[0], "\n")
-        scheduler.step()
+        training_loss = total_loss / n_tokens
+        print(" "*4, "training loss:", training_loss, " "*4, "learning rate:", scheduler.get_last_lr()[0], "" if enable_validation else "\n")
 
-        save_ckpt(save_path, epoch_idx, config, model, optimizer, running_loss, tokenizer)
+        validation_loss = None
+        if enable_validation:
+            with torch.no_grad():
+                model.eval()
+                pbar = tqdm(desc=f"validate", total=split_idx)
+                total_loss = 0.0
+                n_tokens = 0
+
+                for batch_step, batch_idx in enumerate(range(0, split_idx, batch_size)):
+                    bs, be = batch_idx, batch_idx+batch_size
+                    batch = song_ids[bs:be]
+                    mems = None
+                    for seg_idx in range(0, max_seq_len, seg_size): # split a long sequence into small segments
+                        ss, se = seg_idx, seg_idx+seg_size
+                        songs_batch = song_ids[bs:be, ss:se].to(model.device)
+                        labels_batch = labels[:, bs:be, ss+1:se+1].to(model.device)
+                        type_batch = seg_ids[bs:be, ss:se].to(model.device)
+                        sid_batch = struct_ids[bs:be, ss:se].to(model.device)
+                        smask_batch = struct_masks[bs:be, ss:se].to(model.device)
+
+                        output = model(
+                            input_ids=songs_batch,
+                            struct_ids=sid_batch,
+                            struct_masks=smask_batch,
+                            struct_seqs=struct_seqs[bs:be].to(model.device),
+                            struct_seq_masks=struct_seq_masks[bs:be].to(model.device),
+                            mems=mems,
+                            labels=labels_batch,
+                            token_type_ids=type_batch,
+                        )
+                        loss = torch.mean(torch.stack(output.losses, dim=0))
+
+                        mems = output.mems
+
+                        n = len(labels[labels != tokenizer.ignore_idx])
+                        total_loss += loss.item() * n
+                        n_tokens += n
+
+                    pbar.update(len(batch))
+                pbar.close()
+
+                validation_loss = total_loss / n_tokens
+                print(" "*4, "validation loss:", validation_loss, "\n")
+
+        utils.save_ckpt(save_path, epoch_idx, config, model, optimizer, training_loss, validation_loss, tokenizer)
+        scheduler.step()
 
 def train_xlnet(model, song_ids, bar_ids, epoch_num, batch_size, seg_size, cuda, config, tokenizer, save_path, accm_step=1, max_seq_len=None, only_middle=False):
     model.train()
@@ -426,7 +483,7 @@ def train_xlnet(model, song_ids, bar_ids, epoch_num, batch_size, seg_size, cuda,
     To reduce training time, we set the max sequence length to (mean + 2*standard_deviation)
     """
     if max_seq_len is None:
-        max_seq_len = get_max_seq_len(song_ids)
+        max_seq_len = utils.get_max_seq_len(song_ids)
     else:
         print(f"max sequence length is set to {max_seq_len}")
 

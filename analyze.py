@@ -30,6 +30,7 @@ def analyze(data_file):
     struct_lens = []
     error = 0
     struct_dist = {}
+    struct_types = set()
     for song in songs:
         too_long = False
         for label, start, end in song.struct_indices:
@@ -38,6 +39,9 @@ def analyze(data_file):
             struct_dist[l] = struct_dist[l] + 1 if l in struct_dist else 1
             if l > 32:
                 too_long = True
+
+            if label is not None:
+                struct_types.add(label)
         if too_long:
             error += 1
 
@@ -45,6 +49,7 @@ def analyze(data_file):
     print(f"average length of structures in each song: {struct_lens.mean()}")
     print(f"longest struct: {struct_lens.max()}")
     print(f"number and ratio of songs which contain at least one struct longer than 32:", error, error/len(songs))
+    print(f"number of struct types:", len(struct_types))
 
 if __name__ == "__main__":
     data_file = "/screamlab/home/tanch/structure-aware_infilling/dataset/pop909.pickle"
