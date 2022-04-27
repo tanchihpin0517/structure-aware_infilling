@@ -65,12 +65,19 @@ def check_save_path(save_path):
 min_training_loss = 1.0
 min_validation_loss = 1.0
 
-def save_ckpt(save_path, epoch_idx, config, model, optimizer, training_loss, validation_loss, tokenizer):
+def load_ckpt(ckpt_path):
+    ckpt = torch.load(ckpt_path)
+    this.min_training_loss = ckpt.min_training_loss
+    this.min_validation_loss = ckpt.min_validation_loss
+    return ckpt
+
+def save_ckpt(save_path, epoch_idx, config, model, optimizer, scheduler, training_loss, validation_loss, tokenizer):
     ckpt = mm.general.Checkpoint(
         epoch = epoch_idx,
         config = config,
         model_state_dict = model.state_dict(),
         optim_state_dict = optimizer.state_dict(),
+        sched_state_dict = scheduler.state_dict(),
         training_loss = training_loss,
         validation_loss = validation_loss,
         tokenizer = tokenizer,
@@ -103,7 +110,7 @@ def get_max_seq_len(songs, verbose=True):
         print("max sequence length:", song_lens.max())
         match = song_lens[song_lens < max_seq_len]
         print("set max sequence length to:", f"{max_seq_len},",
-              f"including {len(match)} songs of total ({round(len(match)/len(song_lens)*100, 2)}%)")
+              f"including {len(match)} items of total data ({round(len(match)/len(song_lens)*100, 2)}%)")
     return max_seq_len
 
 log_on: bool = False
@@ -127,3 +134,109 @@ def log_status():
     print("enable:", this.log_on)
     print("log stdout", this.log_stdout)
     print("log file:", this.log_file)
+
+def melody_simularity(c, q):
+    """
+    c: compared
+    q: query
+
+    In the paper, the query is transposed into 12 possible key because the pitches of a melody can be shifted.
+    We exchange c and q to get the mean of 2 scores because in the original paper, this metric is used for find a melody from a long song.
+
+    reference: https://www.cs.cmu.edu/~rbd/papers/icmc02melodicsimilarity.pdf
+    """
+    c = np.array(c)
+    q = np.array(q)
+    d = []
+    for s in range(12):
+        r1 = _melody_simularity_impl(c+s, q)
+        r2 = _melody_simularity_impl(q, c+s)
+        d.append((r1+r2) / 2)
+        print(c, q+s, d[-1])
+    return min(d)
+
+def _linear_distance(p1, p2):
+    d = (p1-p2) % 12
+    return min(d, 12-d)
+
+def _melody_simularity_impl(a, b, verbose=False):
+
+    """
+    A = (a1, a2, ..., am)
+    B = b1, b2, ..., bn
+
+    d(i, j) represents the dissimilarity between (a1, a2, ..., ai) and (b1, b2, ..., bj)
+    """
+    a = np.array(a)
+    b = np.array(b)
+
+    a = np.concatenate((np.array([a.mean()]), a))
+    b = np.concatenate((np.array([b.mean()]), b))
+    d = np.zeros([len(a), len(b)])
+    w = _linear_distance
+
+    #a = [float(token[6:-1]) for token in a if token[:5]=='Pitch']
+    #b = [float(token[6:-1]) for token in b if token[:5]=='Pitch']
+
+    #length_penalty = lambda x : x*3
+
+    # initialize
+    for i in range(d.shape[0]):
+        d[i, 0] = 0
+    for j in range(1, d.shape[1]):
+        d[0, j] = d[0, j-1] + w((a[1:]%12).mean(), b[j])
+
+    for i in range(d.shape[0]):
+        d[i, -1] = math.inf
+    for j in range(d.shape[1]):
+        d[-1, j] = math.inf
+
+
+    #def get_value(i,j):
+    #    '''
+    #    Handle negative index
+    #    '''
+    #    if i<=-2 or j<=-2:
+    #        return inf
+    #    if i==-1:
+    #        return length_penalty(j+1)
+    #    if j==-1:
+    #        return length_penalty(i+1)
+    #    if i>=0 and j>=0:
+    #        return dp[i,j]
+
+
+    #for i in range(len(a)):
+    #    for j in range(len(b)):
+    #        d[i,j] = w(a[i],b[j])+min(
+    #            get_value(i-1,j-1),
+    #            get_value(i-2,j-1)+ w(a[i-1],b[j]),
+    #            get_value(i-1,j-2)+ w(a[i],b[j-1]),
+    #            )
+    for i in range(1, d.shape[0]):
+        for j in range(1, d.shape[1]):
+            d[i, j] = min(
+                d[i-1, j-1],
+                d[i-2, j-1] + w(a[i-1], b[j]),
+                d[i-1, j-2] + w(a[i], b[j-1]),
+            ) + w(a[i], b[j])
+
+    if verbose:
+        print(d)
+
+    candidates = np.concatenate((d[1:, -1], d[-1, 1:]))
+    result = candidates.min()
+
+    return result
+
+if __name__ == "__main__":
+    a = np.array([7, 2, 3, 4, 7, 7])
+    b = np.array([2,3,4])
+    print('original:',a,'\nquery:',b)
+    print(_melody_simularity_impl(a, b))
+    print(_melody_simularity_impl(b, a))
+    print(melody_simularity(a, b))
+    print(_melody_simularity_impl(a, b, verbose=True))
+    print(_melody_simularity_impl(a, b+8, verbose=True))
+    print(_melody_simularity_impl(b+8, a, verbose=True))
+

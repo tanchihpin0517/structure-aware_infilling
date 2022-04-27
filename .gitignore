@@ -8,8 +8,7 @@ dataset/*.pickle.small
 trained_model*/
 gen_midi*/
 .nfs*
-train*.sh
 test*.sh
-generate*.sh
 pop909_test/
 /log*
+*.png

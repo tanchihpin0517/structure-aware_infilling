@@ -29,9 +29,12 @@ class Checkpoint:
     config: Config
     model_state_dict: dict
     optim_state_dict: dict
+    sched_state_dict: dict
     training_loss: float
     validation_loss: float
     tokenizer: Tokenizer
+    min_training_loss: float = 1.0
+    min_validation_loss: float = 1.0
 
 @dataclass
 class Output:

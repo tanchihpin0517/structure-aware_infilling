@@ -1,5 +1,10 @@
 import pickle
 import numpy as np
+import os
+import sys
+import metrics
+import pandas as pd
+import seaborn as sns
 
 def analyze(data_file):
     print("file:", data_file)
@@ -51,6 +56,59 @@ def analyze(data_file):
     print(f"number and ratio of songs which contain at least one struct longer than 32:", error, error/len(songs))
     print(f"number of struct types:", len(struct_types))
 
+def draw_sim(file_dir):
+    files = sorted(os.listdir(file_dir))
+    results = []
+    middles = []
+    pasts = []
+    futures = []
+    for file in files:
+        if "result" in file:
+            with open(os.path.join(file_dir, file), 'rb') as f:
+                results.append(pickle.load(f))
+        if "middle" in file:
+            with open(os.path.join(file_dir, file), 'rb') as f:
+                middles.append(pickle.load(f))
+        if "past" in file:
+            with open(os.path.join(file_dir, file), 'rb') as f:
+                pasts.append(pickle.load(f))
+        if "future" in file:
+            with open(os.path.join(file_dir, file), 'rb') as f:
+                futures.append(pickle.load(f))
+
+    target_scores = []
+    baseline_scores = []
+    for i in range(len(results)):
+        target_scores.append(metrics.melody_sim_DP(skyline_pitch(middles[i]), skyline_pitch(results[i])))
+        baseline_scores.append(metrics.melody_sim_DP(skyline_pitch(middles[i]), skyline_pitch(pasts[i])))
+    #target_scores = np.array(target_scores)
+    #baseline_scores = np.array(baseline_scores)
+    #print(target_scores.mean(), target_scores.std())
+    #print(baseline_scores.mean(), baseline_scores.std())
+
+    data = []
+    for score in target_scores:
+        data.append(['Target', score])
+    for score in baseline_scores:
+        data.append(["Baseline", score])
+    df = pd.DataFrame(data, columns=['Model', 'Distance'])
+    print(df)
+    ax = sns.barplot(x='Model', y='Distance', data=df, capsize=.2)
+    ax.set_title("Melody(skyline) simularity distance (the lower the better)")
+    ax.get_figure().savefig('sim.png')
+
+def skyline_pitch(song):
+    skyline = []
+    for event in song.flatten_events():
+        pitches = []
+        for note in event.notes:
+            pitches.append(note.pitch)
+        if len(pitches) > 0:
+            skyline.append(sorted(pitches)[-1])
+    return skyline
+
 if __name__ == "__main__":
     data_file = "/screamlab/home/tanch/structure-aware_infilling/dataset/pop909.pickle"
-    analyze(data_file=data_file)
+    #analyze(data_file=data_file)
+    draw_sim("gen_midi_transxl_struct_infilling_enc/validation_loss_1")
+
