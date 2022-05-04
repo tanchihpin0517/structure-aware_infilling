@@ -51,6 +51,8 @@ class Bar:
     events: List[Event] = field(default_factory=list)
     start: float = None
     end: float = None
+    struct_id: int = None
+    struct_idx: int = None
 
     def __repr__(self):
         s = []

@@ -6,6 +6,7 @@ import math
 from utils import log as ulog
 import numpy as np
 import utils
+from typing import List, Tuple
 
 class PositionalEmbedding(nn.Module):
     def __init__(self, demb):
@@ -25,6 +26,21 @@ class PositionalEmbedding(nn.Module):
         else:
             return pos_emb[:, None, :]
 
+class OrderEmbedding(nn.Module):
+    def __init__(self, demb):
+        super().__init__()
+
+        self.demb = demb
+
+        inv_freq = 1 / (10000 ** (torch.arange(0.0, demb, 2.0) / demb))
+        self.register_buffer("inv_freq", inv_freq)
+
+    def forward(self, order_seq):
+        #sinusoid_inp = torch.outer(order_seq, self.inv_freq)
+        sinusoid_inp = torch.einsum("bi,j->ibj", order_seq, self.inv_freq)
+        pos_emb = torch.cat([sinusoid_inp.sin(), sinusoid_inp.cos()], dim=-1)
+
+        return pos_emb
 
 class PositionwiseFF(nn.Module):
     def __init__(self, d_model, d_inner, dropout, pre_lnorm=False, layer_norm_epsilon=1e-5):
@@ -74,6 +90,7 @@ class RelPartialLearnableMultiHeadAttn(nn.Module):
         pre_lnorm=False,
         r_r_bias=None,
         r_w_bias=None,
+        r_o_bias=None,
         layer_norm_epsilon=1e-5,
     ):
         super().__init__()
@@ -83,14 +100,14 @@ class RelPartialLearnableMultiHeadAttn(nn.Module):
         self.d_head = d_head
         self.dropout = dropout
 
-        self.qkv_net = nn.Linear(d_model, 3 * n_head * d_head, bias=False)
+        #self.qkv_net = nn.Linear(d_model, 3 * n_head * d_head, bias=False)
         self.q_net = nn.Linear(d_model, n_head * d_head, bias=False)
         self.k_net = nn.Linear(d_model, n_head * d_head, bias=False)
         self.v_net = nn.Linear(d_model, n_head * d_head, bias=False)
 
         self.drop = nn.Dropout(dropout)
         self.dropatt = nn.Dropout(dropatt)
-        self.o_net = nn.Linear(n_head * d_head, d_model, bias=False)
+        self.out_net = nn.Linear(n_head * d_head, d_model, bias=False)
 
         self.layer_norm = nn.LayerNorm(d_model, eps=layer_norm_epsilon)
 
@@ -98,14 +115,17 @@ class RelPartialLearnableMultiHeadAttn(nn.Module):
 
         self.pre_lnorm = pre_lnorm
 
-        if r_r_bias is None or r_w_bias is None:  # Biases are not shared
+        if r_r_bias is None or r_w_bias is None or r_o_bias is None:  # Biases are not shared
             self.r_r_bias = nn.Parameter(torch.FloatTensor(self.n_head, self.d_head))
             self.r_w_bias = nn.Parameter(torch.FloatTensor(self.n_head, self.d_head))
+            self.r_o_bias = nn.Parameter(torch.FloatTensor(self.n_head, self.d_head))
         else:
             self.r_r_bias = r_r_bias
             self.r_w_bias = r_w_bias
+            self.r_o_bias = r_o_bias
 
         self.r_net = nn.Linear(self.d_model, self.n_head * self.d_head, bias=False)
+        self.o_net = nn.Linear(self.d_model, self.n_head * self.d_head, bias=False)
 
     def _rel_shift(self, x, cut_len=None):
         zero_pad_shape = (x.size(0), 1) + x.size()[2:]
@@ -121,7 +141,7 @@ class RelPartialLearnableMultiHeadAttn(nn.Module):
 
         return x
 
-    def forward(self, query, content, r, attn_mask=None, mems=None, head_mask=None, output_attentions=False, add_and_norm=True):
+    def forward(self, query, content, r, order_r=None, attn_mask=None, mems=None, head_mask=None, output_attentions=False, add_and_norm=True):
         qlen, rlen, bsz = query.size(0), r.size(0), query.size(1)
 
         if mems is not None:
@@ -134,7 +154,6 @@ class RelPartialLearnableMultiHeadAttn(nn.Module):
             w_head_q = self.q_net(query)
             w_head_k = self.k_net(cat)
             w_head_v = self.v_net(cat)
-            r_head_k = self.r_net(r)
         else:
             if add_and_norm and self.pre_lnorm:
                 query = self.layer_norm(query)
@@ -142,7 +161,8 @@ class RelPartialLearnableMultiHeadAttn(nn.Module):
             w_head_q = self.q_net(query)
             w_head_k = self.k_net(content)
             w_head_v = self.v_net(content)
-            r_head_k = self.r_net(r)
+
+        r_head_k = self.r_net(r)
 
         klen = w_head_k.size(0)
 
@@ -160,8 +180,17 @@ class RelPartialLearnableMultiHeadAttn(nn.Module):
         BD = torch.einsum("ibnd,jnd->ijbn", (rr_head_q, r_head_k))  # qlen x klen x bsz x n_head
         BD = self._rel_shift(BD, cut_len=klen)
 
+        if order_r is not None:
+            o_head_k = self.o_net(order_r)
+            o_head_k = o_head_k.view(klen, bsz, self.n_head, self.d_head)
+            ro_head_q = w_head_q + self.r_o_bias
+            O = torch.einsum("ibnd,jbnd->ijbn", (ro_head_q, o_head_k))  # qlen x klen x bsz x n_head
+            attn_score = AC + BD + O
+        else:
+            attn_score = AC + BD
+
         # [qlen x klen x bsz x n_head]
-        attn_score = AC + BD
+        #attn_score = AC + BD if order_r is None else AC + BD + O
         attn_score.mul_(self.scale)
 
         # compute attention probability
@@ -195,7 +224,7 @@ class RelPartialLearnableMultiHeadAttn(nn.Module):
         attn_vec = attn_vec.contiguous().view(attn_vec.size(0), attn_vec.size(1), self.n_head * self.d_head)
 
         # linear projection
-        attn_out = self.o_net(attn_vec)
+        attn_out = self.out_net(attn_vec)
         attn_out = self.drop(attn_out)
 
         if add_and_norm:
@@ -231,13 +260,14 @@ class RelPartialLearnableDecoderLayer(nn.Module):
             d_model, d_inner, dropout, pre_lnorm=kwargs.get("pre_lnorm"), layer_norm_epsilon=layer_norm_epsilon
         )
 
-    def forward(self, dec_inp, dec_r, dec_attn_mask=None, enc_inp=None, enc_r=None, enc_attn_mask=None, enc_out_sel=None, enc_out_mask=None, mems=None, head_mask=None, output_attentions=False):
+    def forward(self, dec_inp, dec_r, dec_order_r=None, dec_attn_mask=None, enc_inp=None, enc_r=None, enc_attn_mask=None, enc_out_sel=None, enc_out_mask=None, mems=None, head_mask=None, output_attentions=False):
 
         # self attention
         attn_outputs = self.dec_attn(
             dec_inp,
             dec_inp,
             dec_r,
+            order_r=dec_order_r,
             attn_mask=dec_attn_mask,
             mems=mems,
             head_mask=head_mask,
@@ -324,7 +354,7 @@ class TransformerXLConfig(Config):
 
 @dataclass
 class TransformerXLOutput(Output):
-    pass
+    mem_order_ids: List[torch.FloatTensor] = None
 
 class TransformerXL(nn.Module):
     def __init__(self, config):
@@ -347,14 +377,15 @@ class TransformerXL(nn.Module):
         else:
             self.word_emb = REMIEmbedding(config.vocab_size, config.d_model)
 
-        self.seg_embed = nn.Embedding(config.token_type_num, config.d_model)
+        #self.seg_embed = nn.Embedding(config.token_type_num, config.d_model)
+        self.order_emb = OrderEmbedding(self.d_model)
         self.seg_id_A = 0
         self.seg_id_B = 1
         self.seg_id_C = 2
 
         self.pos_emb = PositionalEmbedding(self.d_model)
-        self.r_w_bias = nn.Parameter(torch.FloatTensor(self.n_head, self.d_head))
-        self.r_r_bias = nn.Parameter(torch.FloatTensor(self.n_head, self.d_head))
+        #self.r_w_bias = nn.Parameter(torch.FloatTensor(self.n_head, self.d_head))
+        #self.r_r_bias = nn.Parameter(torch.FloatTensor(self.n_head, self.d_head))
 
         self.layers = nn.ModuleList()
         self.enc_layers = nn.ModuleList()
@@ -368,8 +399,8 @@ class TransformerXL(nn.Module):
                     config.dropout,
                     dropatt=0.0,
                     pre_lnorm=False,
-                    r_w_bias=self.r_w_bias,
-                    r_r_bias=self.r_r_bias,
+                    #r_w_bias=self.r_w_bias,
+                    #r_r_bias=self.r_r_bias,
                     layer_norm_epsilon=1e-5,
                 )
             )
@@ -382,8 +413,8 @@ class TransformerXL(nn.Module):
                     config.dropout,
                     dropatt=0.0,
                     pre_lnorm=False,
-                    r_w_bias=self.r_w_bias,
-                    r_r_bias=self.r_r_bias,
+                    #r_w_bias=self.r_w_bias,
+                    #r_r_bias=self.r_r_bias,
                     layer_norm_epsilon=1e-5,
                 )
             )
@@ -411,10 +442,11 @@ class TransformerXL(nn.Module):
         struct_masks,
         struct_seqs,
         struct_seq_masks,
+        token_order_ids=None,
         mems=None,
+        mem_order_ids=None,
         labels=None,
         head_mask=None,
-        token_type_ids=None,
         output_attentions=False,
         output_hidden_states=False,
         return_dict=True,
@@ -453,11 +485,13 @@ class TransformerXL(nn.Module):
 
         word_emb = self.word_emb(input_ids)
 
-        if token_type_ids is not None:
-            token_type_ids = token_type_ids.transpose(0, 1).contiguous()
-            seg_emb = self.seg_embed(token_type_ids)
+        if token_order_ids is not None:
+            #token_order_ids = token_order_ids.transpose(0, 1).contiguous()
+            if mem_order_ids is not None:
+                token_order_ids = torch.cat([mem_order_ids, token_order_ids], dim=-1)
+            order_emb = self.order_emb(token_order_ids)
         else:
-            seg_emb = None
+            order_emb = None
 
         mlen = mems[0].size(0) if mems is not None else 0
         klen = mlen + qlen
@@ -488,10 +522,12 @@ class TransformerXL(nn.Module):
         if struct_masks is not None:
             struct_ids[struct_masks == 1] = 0 # each sel with -1 shound be masked
 
-        core_out = self.drop(word_emb + seg_emb) if seg_emb is not None else self.drop(word_emb)
+        #core_out = self.drop(word_emb + order_emb) if order_emb is not None else self.drop(word_emb)
+        core_out = self.drop(word_emb)
         pos_emb = self.drop(pos_emb)
         struct_out = self.drop(struct_emb)
         struct_pos_emb = self.drop(struct_pos_emb)
+        order_emb = self.drop(order_emb) if order_emb is not None else None
 
         for i, layer in enumerate(self.enc_layers):
             layer_outputs = layer(
@@ -508,6 +544,7 @@ class TransformerXL(nn.Module):
             layer_outputs = layer(
                 core_out,
                 pos_emb,
+                dec_order_r=order_emb,
                 dec_attn_mask=dec_attn_mask,
                 enc_inp=struct_out,
                 enc_r=struct_pos_emb,
@@ -525,6 +562,11 @@ class TransformerXL(nn.Module):
         core_out = self.drop(core_out)
 
         new_mems = self._update_mems(hids, mems, mlen, qlen)
+        if token_order_ids is not None:
+            new_mem_len = new_mems[0].shape[0]
+            new_mem_order_ids = token_order_ids[:, -new_mem_len:]
+        else:
+            new_mem_order_ids = None
 
         if output_hidden_states:
             # Add last layer and transpose to library standard shape [bsz, len, hidden_dim]
@@ -560,6 +602,7 @@ class TransformerXL(nn.Module):
             last_hidden_states = core_out,
             pred_scores = pred_scores,
             mems = new_mems,
+            mem_order_ids=new_mem_order_ids,
             hidden_states = hids,
             attentions = attentions,
         )
@@ -601,6 +644,8 @@ class TransformerXL(nn.Module):
                 self._init_weight(m.r_w_bias)
             if hasattr(m, "r_r_bias"):
                 self._init_weight(m.r_r_bias)
+            if hasattr(m, "r_o_bias"):
+                self._init_weight(m.r_o_bias)
             if hasattr(m, "r_bias"):
                 self._init_bias(m.r_bias)
 
@@ -677,16 +722,26 @@ class TransformerXL(nn.Module):
             for i, song in enumerate(song_ids):
                 assert len(song_ids[i]) == len(struct_ids[i]) == len(struct_indices[i])
 
+                first_sid = struct_ids[i][1] # ignore BOS
+                last_sid = struct_ids[i][-2] # ignore EOS
+                skip_beginning = 1
+                skip_ending = len(song_ids[i])-1
+                while skip_beginning < len(struct_ids[i]) and struct_ids[i][skip_beginning] == first_sid:
+                    skip_beginning += 1
+                while skip_ending > 0 and struct_ids[i][skip_ending-1] == last_sid:
+                    skip_ending -= 1
+
                 # iterate the whole song along with struct
-                s_end = 0
-                while s_end < len(struct_indices[i]):
+                s_end = skip_beginning
+                #while s_end < len(struct_indices[i]):
+                while s_end < skip_ending:
                     s_start = s_end
                     while s_end < len(struct_indices[i]) and struct_indices[i][s_end] == struct_indices[i][s_start]:
                         s_end += 1
                     sid = struct_ids[i][s_start]
 
-                    if sid == tokenizer.NONE_ID:
-                        continue # skip content without structure
+                    #if sid == tokenizer.NONE_ID:
+                    #    continue # skip content without structure
                     if s_start == 0 or s_end == len(song_ids[i]):
                         continue # avoid data without past content or future content
 
@@ -725,9 +780,7 @@ class TransformerXL(nn.Module):
                  ignore_middle_first=True,
              )
         else:
-            for i, song in enumerate(song_ids):
-                seg_ids.append([self.past_id()] * len(song))
-                ignore_labels.append([0] * len(song))
+            pass
 
         for i in range(len(tn_song_ids)):
             l = len(tn_song_ids[i])

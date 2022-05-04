@@ -54,7 +54,7 @@ def parse_args():
     parser.add_argument('--mem-len', type=int, default=2048) # default is same as seg_size
     parser.add_argument('--max-struct-len', type=int, default=512)
 
-    parser.add_argument('--training-split-ratio', type=int, default=9)
+    parser.add_argument('--training-split-ratio', type=float, default=0.05)
     parser.add_argument('--max-gen-len', type=int, default=4096, help='number of tokens in generation')
     return parser.parse_args()
 
@@ -419,7 +419,7 @@ def train_transxl(
         optimizer.load_state_dict(ckpt.optim_state_dict)
         scheduler.load_state_dict(ckpt.sched_state_dict)
 
-    split_idx = len(song_ids)*(10-split_ratio)//10 if split_ratio is not None else 0
+    split_idx = round(len(song_ids)*split_ratio) if split_ratio is not None else 0
     sample_rate = 1.0
 
     for epoch_idx in range(0 if ckpt is None else ckpt.epoch+1, epoch_num):
@@ -432,6 +432,7 @@ def train_transxl(
             bs, be = batch_idx, batch_idx+batch_size
             batch = song_ids[bs:be]
             mems = None
+            mem_order_ids = None
 
             if sample_rate < random.random():
                 pbar.update(len(batch))
@@ -441,7 +442,7 @@ def train_transxl(
                 ss, se = seg_idx, seg_idx+seg_size
                 songs_batch = song_ids[bs:be, ss:se].to(model.device)
                 labels_batch = labels[:, bs:be, ss+1:se+1].to(model.device)
-                type_batch = seg_ids[bs:be, ss:se].to(model.device)
+                order_batch = seg_ids[bs:be, ss:se].to(model.device)
                 sid_batch = struct_ids[bs:be, ss:se].to(model.device)
                 smask_batch = struct_masks[bs:be, ss:se].to(model.device)
 
@@ -451,16 +452,18 @@ def train_transxl(
                     struct_masks=smask_batch,
                     struct_seqs=struct_seqs[bs:be].to(model.device),
                     struct_seq_masks=struct_seq_masks[bs:be].to(model.device),
+                    token_order_ids=order_batch,
                     mems=mems,
+                    mem_order_ids=mem_order_ids,
                     labels=labels_batch,
-                    token_type_ids=type_batch,
                 )
                 loss = torch.mean(torch.stack(output.losses, dim=0))
                 loss.backward()
 
                 mems = output.mems
+                mem_order_ids = output.mem_order_ids
 
-                n = len(labels[labels != tokenizer.ignore_idx])
+                n = len(labels_batch[labels_batch != tokenizer.ignore_idx])
                 total_loss += loss.item() * n
                 n_tokens += n
 
@@ -488,12 +491,13 @@ def train_transxl(
                     bs, be = batch_idx, (batch_idx+batch_size if batch_idx+batch_size < split_idx else split_idx)
                     batch = song_ids[bs:be]
                     mems = None
+                    mem_order_ids = None
                     bs, be = 0,2
                     for seg_idx in range(0, max_seq_len, seg_size): # split a long sequence into small segments
                         ss, se = seg_idx, seg_idx+seg_size
                         songs_batch = song_ids[bs:be, ss:se].to(model.device)
                         labels_batch = labels[:, bs:be, ss+1:se+1].to(model.device)
-                        type_batch = seg_ids[bs:be, ss:se].to(model.device)
+                        order_batch = seg_ids[bs:be, ss:se].to(model.device)
                         sid_batch = struct_ids[bs:be, ss:se].to(model.device)
                         smask_batch = struct_masks[bs:be, ss:se].to(model.device)
 
@@ -503,9 +507,10 @@ def train_transxl(
                             struct_masks=smask_batch,
                             struct_seqs=struct_seqs[bs:be].to(model.device),
                             struct_seq_masks=struct_seq_masks[bs:be].to(model.device),
+                            token_order_ids=order_batch,
                             mems=mems,
+                            mem_order_ids=mem_order_ids,
                             labels=labels_batch,
-                            token_type_ids=type_batch,
                         )
                         loss = torch.mean(torch.stack(output.losses, dim=0))
 
@@ -520,8 +525,9 @@ def train_transxl(
                         #    ulog(inp[i], inp2[i], sep='\t')
 
                         mems = output.mems
+                        mem_order_ids = output.mem_order_ids
 
-                        n = len(labels[labels != tokenizer.ignore_idx])
+                        n = len(labels_batch[labels_batch != tokenizer.ignore_idx])
                         total_loss += loss.item() * n
                         n_tokens += n
 

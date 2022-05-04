@@ -601,7 +601,7 @@ class Tokenizer:
         else:
             return True # always legal while not using cp
 
-    def extract_struct(self, song_ids, struct_ids, struct_indices, max_struct_len=512, mask_first_time=False):
+    def extract_struct(self, song_ids, struct_ids, struct_indices, max_struct_len=512, mask_first_time=False, half_content=False):
         song_ids = deepcopy(song_ids)
         struct_ids = deepcopy(struct_ids)
         struct_indices = deepcopy(struct_indices)
@@ -634,6 +634,10 @@ class Tokenizer:
                 s_end = s_start
                 while s_end < len(struct_index) and struct_index[s_end] == struct_index[s_start]:
                     s_end += 1
+                next_start = s_end
+
+                if half_content:
+                    s_end = (s_start + s_end) // 2
 
                 sid = struct_id[s_start]
                 slen = s_end - s_start
@@ -657,14 +661,14 @@ class Tokenizer:
                 if sid != self.NONE_ID and sid not in appear:
                     appear.add(sid)
                     pad = [0] * len(self.class_tabel) if self.use_cp else 0
-                    seq = torch.LongTensor(song_id[s_start:s_end] + [pad]*(max_struct_len-slen))
+                    seq = torch.LongTensor(song_id[s_start:s_end] + [pad]*(max_struct_len-s_end))
                     seq_mask = torch.FloatTensor([0]*(min(slen, max_struct_len)) + [1]*(max_struct_len-slen))
 
                     struct_seqs[i][sid] = seq[:max_struct_len]
                     struct_seq_masks[i][sid] = seq_mask
                     struct_lens.append(slen)
 
-                s_start = s_end
+                s_start = next_start
             assert len(song_id) == len(mask)
             struct_masks.append(mask)
 
