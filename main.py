@@ -36,6 +36,7 @@ def parse_args():
     parser.add_argument('--gen-num', type=int, default=16)
     parser.add_argument('--infilling', default=False, action='store_true')
     parser.add_argument('--bar-pe', default=False, action='store_true')
+    parser.add_argument('--half-struct', default=False, action='store_true')
 
     parser.add_argument('--batch-size', type=int, default=1)
     parser.add_argument('--seg-size', type=int, default=2048)
@@ -136,6 +137,7 @@ def main():
                 max_seq_len=args.max_seq_len,
                 only_middle=(not args.with_past),
                 max_struct_len=args.max_struct_len,
+                half_struct=args.half_struct,
                 ckpt=ckpt,
             )
         elif args.model == "xlnet":
@@ -203,7 +205,8 @@ def main():
                     args.cuda,
                     args.seg_size,
                     tokenizer,
-                    max_gen_len=args.max_gen_len
+                    max_gen_len=args.max_gen_len,
+                    half_struct=args.half_struct,
                 )
 
             for i in range(len(gen_song_ids)):
@@ -369,6 +372,7 @@ def train_transxl(
     only_middle=True,
     enable_validation=True,
     max_struct_len=512,
+    half_struct=False,
     ckpt=None
 ):
     model = model.cuda() if cuda else model
@@ -378,7 +382,7 @@ def train_transxl(
         0 => attend
         1 => not attend
     """
-    struct_seqs, struct_seq_masks, struct_masks = tokenizer.extract_struct(song_ids, struct_ids, struct_indices, max_struct_len=max_struct_len)
+    struct_seqs, struct_seq_masks, struct_masks = tokenizer.extract_struct(song_ids, struct_ids, struct_indices, max_struct_len=max_struct_len, half_content=half_struct)
 
     song_ids, struct_ids, struct_indices, struct_masks, seg_ids, ignore_labels, expand_idx = \
         model.prepare_training_data(song_ids, struct_ids, struct_indices, struct_masks, bar_ids, tokenizer, only_middle=only_middle)
@@ -492,7 +496,6 @@ def train_transxl(
                     batch = song_ids[bs:be]
                     mems = None
                     mem_order_ids = None
-                    bs, be = 0,2
                     for seg_idx in range(0, max_seq_len, seg_size): # split a long sequence into small segments
                         ss, se = seg_idx, seg_idx+seg_size
                         songs_batch = song_ids[bs:be, ss:se].to(model.device)
@@ -734,11 +737,11 @@ def make_generation_data(song_ids, struct_ids, struct_indices, struct_masks, mod
 
     return song_ids, struct_ids, struct_masks, struct_tgt_ids, struct_tgt_lens, seg_ids, past_ids, middle_ids, future_ids
 
-def generate_transxl(model, song_ids, struct_ids, struct_indices, cuda, seg_size, tokenizer, max_gen_len, bar_num=None):
+def generate_transxl(model, song_ids, struct_ids, struct_indices, cuda, seg_size, tokenizer, max_gen_len, bar_num=None, half_struct=None):
     model.eval()
     model = model.cuda() if cuda else model
 
-    struct_seqs, struct_seq_masks, struct_masks = tokenizer.extract_struct(song_ids, struct_ids, struct_indices,)
+    struct_seqs, struct_seq_masks, struct_masks = tokenizer.extract_struct(song_ids, struct_ids, struct_indices, half_content=half_struct)
     song_ids, struct_ids, struct_masks, struct_tgt_ids, struct_tgt_lens, seg_ids, past_ids, middle_ids, future_ids = \
         make_generation_data(song_ids, struct_ids, struct_indices, struct_masks, model, tokenizer)
 
@@ -773,10 +776,11 @@ def generate_transxl(model, song_ids, struct_ids, struct_indices, cuda, seg_size
             struct_masks=struct_mask,
             struct_seqs=struct_seq,
             struct_seq_masks=struct_seq_mask,
-            token_type_ids=seg_id,
+            token_order_ids=seg_id,
             mems=None
         )
         mems = output.mems
+        mem_order_ids = output.mem_order_ids
 
         #output_ids = torch.argmax(output.pred_scores, dim=-1)
         while True:
@@ -806,10 +810,12 @@ def generate_transxl(model, song_ids, struct_ids, struct_indices, cuda, seg_size
                 struct_masks=struct_mask,
                 struct_seqs=struct_seq,
                 struct_seq_masks=struct_seq_mask,
-                token_type_ids=seg_id,
-                mems=mems
+                token_order_ids=seg_id,
+                mems=mems,
+                mem_order_ids=mem_order_ids,
             )
             mems = output.mems
+            mem_order_ids = output.mem_order_ids
 
             #gen_id = torch.argmax(output.pred_scores, dim=-1)[0, -1].item()
             while True:

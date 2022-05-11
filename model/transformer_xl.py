@@ -846,7 +846,7 @@ class TransformerXL(nn.Module):
                 seg.extend([self.future_id()] * (len(tmp)-len(seg)))
                 ignore.extend([1] * (len(tmp)-len(ignore)))
 
-                tmp.extend(song_ids[i][B_start: B_end] + [song[-1]]) # B + EOS
+                tmp.extend(song_ids[i][B_start: B_end] + [song_ids[i][-1]]) # B + EOS
                 s_tmp.extend(struct_ids[i][B_start: B_end] + [tokenizer.NONE_ID])
                 if struct_indices is not None:
                     si_tmp.extend(struct_indices[i][B_start: B_end] + [tokenizer.NONE_ID])

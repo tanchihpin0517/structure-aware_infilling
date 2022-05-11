@@ -5,6 +5,7 @@ import sys
 import metrics
 import pandas as pd
 import seaborn as sns
+from .model.tokenizer import Tokenizer
 
 def analyze(data_file):
     print("file:", data_file)
@@ -117,5 +118,7 @@ def skyline_pitch(song):
 if __name__ == "__main__":
     data_file = "/screamlab/home/tanch/structure-aware_infilling/dataset/pop909.pickle"
     analyze(data_file=data_file)
+
+    tokenizer = Tokenizer()
     #draw_sim("gen_midi_transxl_struct_infilling_enc/validation_loss_1")
 

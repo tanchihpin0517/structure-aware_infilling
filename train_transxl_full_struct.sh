@@ -12,10 +12,10 @@ python main.py --train --cuda \
     --num-head 8 \
     --seg-size 2048 \
     --mem-len 2048 \
-    --max-struct-len 256 \
+    --max-struct-len 512 \
     --batch-size 4 \
     --epoch-num 1000 \
     --data-file $DATA_FILE \
     --accm-step 1 \
-    --save-path "./trained_model_transxl_single_struct/loss_%d.ckpt" \
+    --save-path "./trained_model_transxl_single_full_struct/loss_%d.ckpt" \
     #--ckpt-path "./trained_model_transxl_struct_infilling_1/validation_loss_0.ckpt"

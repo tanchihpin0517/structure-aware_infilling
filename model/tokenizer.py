@@ -299,8 +299,18 @@ class Tokenizer:
                 # note
                 for event in bar.events:
                     tempo = self._fit_range(event.tempo, self.tempo_base, self.tempo_tick_num, 4)
+                    if len(event.notes) > 0:
+                        pos = event.notes[0].onset
+                        tokens.extend([
+                            self.tempo(tempo),
+                            self.pos(pos),
+                        ])
+                        bar_id.extend([bar_count] * 2)
+                        struct_id.extend([sid] * 2)
+                        struct_index.extend([sidx] * 2)
+
                     for note in event.notes:
-                        pos = note.onset
+                        #pos = note.onset
                         pitch = note.pitch
                         vel = self._fit_range(note.velocity, self.vel_base, self.vel_tick_num, 4)
                         dur = note.duration
@@ -321,15 +331,15 @@ class Tokenizer:
                             struct_index.append(sidx)
                         else:
                             tokens.extend([
-                                self.tempo(tempo),
-                                self.pos(pos),
+                                #self.tempo(tempo),
+                                #self.pos(pos),
                                 self.pitch(pitch),
                                 #self.vel(vel),
                                 self.dur(dur),
                             ])
-                            bar_id.extend([bar_count] * 4)
-                            struct_id.extend([sid] * 4)
-                            struct_index.extend([sidx] * 4)
+                            bar_id.extend([bar_count] * 2)
+                            struct_id.extend([sid] * 2)
+                            struct_index.extend([sidx] * 2)
 
         if with_eos:
             if self.use_cp:
@@ -648,20 +658,20 @@ class Tokenizer:
                     input tokens will not attend to struct sequnces which appear at the first time
                     """
                     if sid == self.NONE_ID or sid not in appear:
-                        mask.extend([1] * slen)
+                        mask.extend([1] * (next_start - s_start))
                     else:
-                        mask.extend([0] * slen)
+                        mask.extend([0] * (next_start - s_start))
                 else:
                     if sid == self.NONE_ID:
-                        mask.extend([1] * slen)
+                        mask.extend([1] * (next_start - s_start))
                     else:
-                        mask.extend([0] * slen)
+                        mask.extend([0] * (next_start - s_start))
 
 
                 if sid != self.NONE_ID and sid not in appear:
                     appear.add(sid)
                     pad = [0] * len(self.class_tabel) if self.use_cp else 0
-                    seq = torch.LongTensor(song_id[s_start:s_end] + [pad]*(max_struct_len-s_end))
+                    seq = torch.LongTensor(song_id[s_start:s_end] + [pad]*(max_struct_len-slen))
                     seq_mask = torch.FloatTensor([0]*(min(slen, max_struct_len)) + [1]*(max_struct_len-slen))
 
                     struct_seqs[i][sid] = seq[:max_struct_len]
