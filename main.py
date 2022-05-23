@@ -24,6 +24,7 @@ def parse_args():
     parser.add_argument('--model', type=str, default="xlnet")
     parser.add_argument('--train', default=False, action='store_true')
     parser.add_argument('--test', default=False, action='store_true')
+    parser.add_argument('--experience', default=False, action='store_true')
     parser.add_argument('--generate', default=False, action='store_true')
     parser.add_argument('--cuda', default=False, action='store_true')
     parser.add_argument('--vocab-file', type=str, default='dataset/vocab_debug.txt')
@@ -36,13 +37,15 @@ def parse_args():
     parser.add_argument('--gen-num', type=int, default=16)
     parser.add_argument('--infilling', default=False, action='store_true')
     parser.add_argument('--bar-pe', default=False, action='store_true')
-    parser.add_argument('--half-struct', default=False, action='store_true')
+    #parser.add_argument('--half-struct', default=False, action='store_true')
+    parser.add_argument('--training-data', type=str, default=None)
+    parser.add_argument('--testing-data', type=str, default=None)
 
     parser.add_argument('--batch-size', type=int, default=1)
     parser.add_argument('--seg-size', type=int, default=2048)
     parser.add_argument('--epoch-num', type=int, default=1, help='number of training epochs')
     parser.add_argument('--accm-step', type=int, default=1)
-    parser.add_argument('--max-seq-len', type=int, default=None)
+    parser.add_argument('--max-seq-len', type=int, default=1024)
     parser.add_argument('--with-past', default=False, action='store_true')
     parser.add_argument('--seed', type=int, default=0)
 
@@ -54,8 +57,9 @@ def parse_args():
     parser.add_argument('--num-layer', type=int, default=8)
     parser.add_argument('--mem-len', type=int, default=2048) # default is same as seg_size
     parser.add_argument('--max-struct-len', type=int, default=512)
+    parser.add_argument('--struct-ratio', type=float, default=1.0)
 
-    parser.add_argument('--training-split-ratio', type=float, default=0.05)
+    #parser.add_argument('--training-split-ratio', type=float, default=0.1)
     parser.add_argument('--max-gen-len', type=int, default=4096, help='number of tokens in generation')
     return parser.parse_args()
 
@@ -67,7 +71,7 @@ def main():
     #torch.autograd.set_detect_anomaly(True)
 
     if args.preprocess:
-        gen_data(args.data_file, small_size=16)
+        gen_data(args.data_file, small_size=16, split_ratio=0.1)
         exit()
 
     use_bar_cd = (not args.no_bar_cd)
@@ -79,7 +83,7 @@ def main():
     np.random.seed(args.seed)
 
     #data = load_data(args.data_file, args.preprocess, melody_only=True, max_song_num=16)
-    songs_data = load_data(args.data_file, track_sel=['melody', 'bridge'])
+    #songs_data = load_data(args.data_file, track_sel=['melody', 'bridge'])
     #songs_data = load_data(args.data_file, track_sel=['melody', 'bridge', 'piano'])
 
     if args.train:
@@ -87,7 +91,7 @@ def main():
             utils.check_save_path(args.save_path)
 
         tokenizer = Tokenizer(args.vocab_file, use_cp=args.cp)
-        song_ids, bar_ids, struct_ids, struct_indices = tokenize(songs_data, tokenizer)
+        #song_ids, bar_ids, struct_ids, struct_indices = tokenize(songs_data, tokenizer)
 
         if args.model == "transformer_xl":
             ckpt = None
@@ -121,10 +125,8 @@ def main():
                 model = TransformerXL(config)
             train_transxl(
                 model,
-                song_ids,
-                struct_ids,
-                struct_indices,
-                bar_ids,
+                args.training_data,
+                args.testing_data,
                 args.epoch_num,
                 args.batch_size,
                 args.seg_size,
@@ -132,12 +134,11 @@ def main():
                 config,
                 tokenizer,
                 args.save_path,
-                split_ratio=args.training_split_ratio,
                 accm_step=args.accm_step,
                 max_seq_len=args.max_seq_len,
                 only_middle=(not args.with_past),
                 max_struct_len=args.max_struct_len,
-                half_struct=args.half_struct,
+                struct_ratio=args.struct_ratio,
                 ckpt=ckpt,
             )
         elif args.model == "xlnet":
@@ -174,7 +175,56 @@ def main():
         else:
             raise Exception(f"Unknow model type: {args.model}")
 
+    if args.experience:
+        with open(args.data_file, "rb") as f:
+            testing_data = pickle.load(f)
+
+        #print(testing_data[0].keys())
+        #print(testing_data[0]['original_song'])
+        #exit()
+
+        ckpt = utils.load_ckpt(args.ckpt_path)
+        #tokenizer = ckpt.tokenizer
+        tokenizer = Tokenizer(args.vocab_file, use_cp=ckpt.config.use_cp)
+
+        assert ckpt.config.use_cp == args.cp
+        assert ckpt.config.use_bar_cd == use_bar_cd
+        assert ckpt.config.infilling == args.infilling
+
+        if args.model == "transformer_xl":
+            model = TransformerXL(ckpt.config)
+            model.load_state_dict(ckpt.model_state_dict)
+            print("ckpt:", args.ckpt_path)
+            print("epoch:", ckpt.epoch)
+            print("training loss:", ckpt.training_loss)
+            print("validation loss:", ckpt.validation_loss)
+            print("use cp:", ckpt.config.use_cp)
+            print("use bar count down:", ckpt.config.use_bar_cd)
+
+            songs = []
+            for data in testing_data:
+                past, target, future = data['past'], data['target'], data['future']
+                song = Song.copy(data['original_song'], bars=(past+target+future))
+                song.struct_indices.append([None, 0, len(past)])
+                song.struct_indices.append(["S", len(past), len(past)+len(target)])
+                song.struct_indices.append([None, len(past)+len(target), len(song.bars)])
+                songs.append(song)
+
+            with torch.no_grad():
+                #song_ids, struct_ids, struct_indices, infilling_indices = make_generation_data(song_ids, struct_ids, struct_indices, tokenizer)
+                experience_transxl(
+                    model,
+                    songs,
+                    args.seg_size,
+                    tokenizer,
+                    max_gen_len=args.max_gen_len,
+                    struct_ratio=args.struct_ratio,
+                    save_path=args.save_path,
+                )
+
     if args.generate:
+        songs_data = load_data(args.data_file, track_sel=['melody', 'bridge'])
+
         songs = songs_data[:args.gen_num]
         ckpt = utils.load_ckpt(args.ckpt_path)
         #tokenizer = ckpt.tokenizer
@@ -206,7 +256,7 @@ def main():
                     args.seg_size,
                     tokenizer,
                     max_gen_len=args.max_gen_len,
-                    half_struct=args.half_struct,
+                    struct_ratio=args.struct_ratio,
                 )
 
             for i in range(len(gen_song_ids)):
@@ -268,10 +318,12 @@ def main():
         else:
             raise Exception(f"Unknow model type: {args.model}")
 
-def gen_data(data_file, small_size=16):
+def gen_data(data_file, small_size=16, split_ratio=0.1):
     #data, err_cnt = preprocess.pop909("./dataset/pop909/POP909", "./dataset/pop909_struct/POP909", song_sel=5, multi_task=False)
     data, err_cnt = preprocess.pop909("./dataset/pop909/POP909", "./dataset/pop909_struct/POP909")
     print("number of error in preprocessing:", err_cnt)
+
+    sp = int(len(data) * split_ratio)
 
     with open(data_file, 'wb') as f:
         if os.path.exists(data_file):
@@ -279,6 +331,12 @@ def gen_data(data_file, small_size=16):
         else:
             print(f"create file: {data_file}")
         pickle.dump(data, f)
+
+    with open(f"{data_file}.training", "wb") as f:
+        pickle.dump(data[sp:], f)
+
+    with open(f"{data_file}.testing", "wb") as f:
+        pickle.dump(data[:sp], f)
 
     small_file = f"{data_file}.small"
     with open(small_file, 'wb') as f:
@@ -353,38 +411,27 @@ def default_scheduler(optimizer, lr_max=1.0, lr_min=1.0, T=10, warmup=10, refine
                               lr_min + 0.5*(lr_max-lr_min)*(1.0+math.cos(epoch/T*math.pi)) if epoch < refine else lr_min
     return torch.optim.lr_scheduler.LambdaLR(optimizer=optimizer, lr_lambda=lr_lambda)
 
-def train_transxl(
-    model,
-    song_ids,
-    struct_ids,
-    struct_indices,
-    bar_ids,
-    epoch_num,
-    batch_size,
-    seg_size,
-    cuda,
-    config,
+def prepare_training_data(
+    data_file,
     tokenizer,
-    save_path,
-    split_ratio=None,
-    accm_step=1,
+    model,
+    max_struct_len=None,
+    struct_ratio=None,
+    only_middle=None,
     max_seq_len=None,
-    only_middle=True,
-    enable_validation=True,
-    max_struct_len=512,
-    half_struct=False,
-    ckpt=None
 ):
-    model = model.cuda() if cuda else model
+    songs_data = load_data(data_file, track_sel=['melody', 'bridge'])
+    song_ids, bar_ids, struct_ids, struct_indices = tokenize(songs_data, tokenizer)
 
     """
     struct_masks: mask to indicate whether doing cross attention to struct sequence for each input token
         0 => attend
         1 => not attend
     """
-    struct_seqs, struct_seq_masks, struct_masks = tokenizer.extract_struct(song_ids, struct_ids, struct_indices, max_struct_len=max_struct_len, half_content=half_struct)
+    print("the structure length is set to", max_struct_len)
+    struct_seqs, struct_seq_masks, struct_masks = tokenizer.extract_struct(song_ids, struct_ids, struct_indices, max_struct_len=max_struct_len, struct_ratio=struct_ratio)
 
-    song_ids, struct_ids, struct_indices, struct_masks, seg_ids, ignore_labels, expand_idx = \
+    song_ids, struct_ids, struct_indices, struct_masks, order_ids, ignore_labels, expand_idx = \
         model.prepare_training_data(song_ids, struct_ids, struct_indices, struct_masks, bar_ids, tokenizer, only_middle=only_middle)
 
     expand_idx = torch.LongTensor(expand_idx)[:, None, None].expand(-1, struct_seqs.shape[1], struct_seqs.shape[2])
@@ -397,10 +444,11 @@ def train_transxl(
     if max_seq_len is None:
         max_seq_len = utils.get_max_seq_len(song_ids)
     else:
+        utils.get_max_seq_len(song_ids)
         print(f"max sequence length is set to {max_seq_len}")
 
     song_ids, _ = tokenizer.pad(song_ids, 0, max_seq_len, gen_mask=False)
-    seg_ids, _ = tokenizer.pad(seg_ids, 0, max_seq_len, gen_mask=False, use_cp=False)
+    order_ids, _ = tokenizer.pad(order_ids, 0, max_seq_len, gen_mask=False, use_cp=False)
     ignore_labels, _ = tokenizer.pad(ignore_labels, 0, max_seq_len, gen_mask=False, use_cp=False)
 
     struct_ids, _ = tokenizer.pad(struct_ids, tokenizer.NONE_ID, max_seq_len, gen_mask=False, use_cp=False)
@@ -416,6 +464,33 @@ def train_transxl(
     """
     labels = tokenizer.get_labels(song_ids, ignore_labels=ignore_labels)
 
+    return song_ids, labels, order_ids, struct_ids, struct_masks, struct_seqs, struct_seq_masks,
+
+def train_transxl(
+    model,
+    #song_ids,
+    #struct_ids,
+    #struct_indices,
+    #bar_ids,
+    training_data,
+    validation_data,
+    epoch_num,
+    batch_size,
+    seg_size,
+    cuda,
+    config,
+    tokenizer,
+    save_path,
+    accm_step=1,
+    max_seq_len=None,
+    only_middle=True,
+    enable_validation=True,
+    max_struct_len=512,
+    struct_ratio=1.0,
+    ckpt=None
+):
+    model = model.cuda() if cuda else model
+
     optimizer = default_optimizer(model, lr=1e-4)
     #scheduler = default_scheduler(optimizer, lr_max=2.0, lr_min=1.0, T=10, warmup=10, refine=50)
     scheduler = default_scheduler(optimizer, lr_max=1.0, lr_min=1.0, T=10, warmup=10, refine=50)
@@ -423,39 +498,59 @@ def train_transxl(
         optimizer.load_state_dict(ckpt.optim_state_dict)
         scheduler.load_state_dict(ckpt.sched_state_dict)
 
-    split_idx = round(len(song_ids)*split_ratio) if split_ratio is not None else 0
-    sample_rate = 1.0
+    tn_song_ids, tn_labels, tn_order_ids, tn_struct_ids, tn_struct_masks, tn_struct_seqs, tn_struct_seq_masks = \
+        prepare_training_data(
+            data_file=training_data,
+            tokenizer=tokenizer,
+            model=model,
+            max_struct_len=max_struct_len,
+            struct_ratio=struct_ratio,
+            only_middle=only_middle,
+            max_seq_len=max_seq_len,
+        )
 
+    val_song_ids, val_labels, val_order_ids, val_struct_ids, val_struct_masks, val_struct_seqs, val_struct_seq_masks = \
+        prepare_training_data(
+            data_file=validation_data,
+            tokenizer=tokenizer,
+            model=model,
+            max_struct_len=max_struct_len,
+            struct_ratio=struct_ratio,
+            only_middle=only_middle,
+            max_seq_len=max_seq_len,
+        )
+
+    #sample_rate = 1.0
     for epoch_idx in range(0 if ckpt is None else ckpt.epoch+1, epoch_num):
         model.train()
-        pbar = tqdm(desc=f"epoch {epoch_idx+1}", total=len(song_ids)-split_idx)
+        pbar = tqdm(desc=f"epoch {epoch_idx+1}", total=len(tn_song_ids))
         total_loss = 0.0
         n_tokens = 0
 
-        for batch_step, batch_idx in enumerate(range(split_idx, len(song_ids), batch_size)):
+        for batch_step, batch_idx in enumerate(range(0, len(tn_song_ids), batch_size)):
             bs, be = batch_idx, batch_idx+batch_size
-            batch = song_ids[bs:be]
+            batch = tn_song_ids[bs:be]
             mems = None
             mem_order_ids = None
 
-            if sample_rate < random.random():
-                pbar.update(len(batch))
-                continue
+            #if sample_rate < random.random():
+            #    pbar.update(len(batch))
+            #    continue
 
             for seg_idx in range(0, max_seq_len, seg_size): # split a long sequence into small segments
                 ss, se = seg_idx, seg_idx+seg_size
-                songs_batch = song_ids[bs:be, ss:se].to(model.device)
-                labels_batch = labels[:, bs:be, ss+1:se+1].to(model.device)
-                order_batch = seg_ids[bs:be, ss:se].to(model.device)
-                sid_batch = struct_ids[bs:be, ss:se].to(model.device)
-                smask_batch = struct_masks[bs:be, ss:se].to(model.device)
+                songs_batch = tn_song_ids[bs:be, ss:se].to(model.device)
+                labels_batch = tn_labels[:, bs:be, ss+1:se+1].to(model.device)
+                order_batch = tn_order_ids[bs:be, ss:se].to(model.device)
+                sid_batch = tn_struct_ids[bs:be, ss:se].to(model.device)
+                smask_batch = tn_struct_masks[bs:be, ss:se].to(model.device)
 
                 output = model(
                     input_ids=songs_batch,
                     struct_ids=sid_batch,
                     struct_masks=smask_batch,
-                    struct_seqs=struct_seqs[bs:be].to(model.device),
-                    struct_seq_masks=struct_seq_masks[bs:be].to(model.device),
+                    struct_seqs=tn_struct_seqs[bs:be].to(model.device),
+                    struct_seq_masks=tn_struct_seq_masks[bs:be].to(model.device),
                     token_order_ids=order_batch,
                     mems=mems,
                     mem_order_ids=mem_order_ids,
@@ -485,31 +580,31 @@ def train_transxl(
         if enable_validation:
             with torch.no_grad():
                 model.eval()
-                pbar = tqdm(desc=f"validate", total=split_idx)
+                pbar = tqdm(desc=f"validate", total=len(val_song_ids))
                 total_loss = 0.0
                 n_tokens = 0
 
                 torch.set_printoptions(threshold=10_000)
 
-                for batch_step, batch_idx in enumerate(range(0, split_idx, batch_size)):
-                    bs, be = batch_idx, (batch_idx+batch_size if batch_idx+batch_size < split_idx else split_idx)
-                    batch = song_ids[bs:be]
+                for batch_step, batch_idx in enumerate(range(0, len(val_song_ids), batch_size)):
+                    bs, be = batch_idx, batch_idx+batch_size
+                    batch = val_song_ids[bs:be]
                     mems = None
                     mem_order_ids = None
                     for seg_idx in range(0, max_seq_len, seg_size): # split a long sequence into small segments
                         ss, se = seg_idx, seg_idx+seg_size
-                        songs_batch = song_ids[bs:be, ss:se].to(model.device)
-                        labels_batch = labels[:, bs:be, ss+1:se+1].to(model.device)
-                        order_batch = seg_ids[bs:be, ss:se].to(model.device)
-                        sid_batch = struct_ids[bs:be, ss:se].to(model.device)
-                        smask_batch = struct_masks[bs:be, ss:se].to(model.device)
+                        songs_batch = val_song_ids[bs:be, ss:se].to(model.device)
+                        labels_batch = val_labels[:, bs:be, ss+1:se+1].to(model.device)
+                        order_batch = val_order_ids[bs:be, ss:se].to(model.device)
+                        sid_batch = val_struct_ids[bs:be, ss:se].to(model.device)
+                        smask_batch = val_struct_masks[bs:be, ss:se].to(model.device)
 
                         output = model(
                             input_ids=songs_batch,
                             struct_ids=sid_batch,
                             struct_masks=smask_batch,
-                            struct_seqs=struct_seqs[bs:be].to(model.device),
-                            struct_seq_masks=struct_seq_masks[bs:be].to(model.device),
+                            struct_seqs=val_struct_seqs[bs:be].to(model.device),
+                            struct_seq_masks=val_struct_seq_masks[bs:be].to(model.device),
                             token_order_ids=order_batch,
                             mems=mems,
                             mem_order_ids=mem_order_ids,
@@ -674,7 +769,7 @@ def select_bars(songs, start, end):
         clipped_songs.append(song.clip(start, end))
     return clipped_songs
 
-def make_generation_data(song_ids, struct_ids, struct_indices, struct_masks, model, tokenizer):
+def make_generation_data(song_ids, struct_ids, struct_indices, struct_masks, model, tokenizer, first_appear=False):
     song_ids = copy.deepcopy(song_ids)
     struct_ids = copy.deepcopy(struct_ids)
     struct_indices = copy.deepcopy(struct_indices)
@@ -702,7 +797,7 @@ def make_generation_data(song_ids, struct_ids, struct_indices, struct_masks, mod
                 s_end += 1
             sid = struct_ids[i][s_start]
 
-            if sid != tokenizer.NONE_ID and sid not in appear:
+            if not first_appear and sid != tokenizer.NONE_ID and sid not in appear:
                 appear.add(sid)
             elif sid != tokenizer.NONE_ID:
                 struct_tgt_ids.append(sid)
@@ -737,11 +832,145 @@ def make_generation_data(song_ids, struct_ids, struct_indices, struct_masks, mod
 
     return song_ids, struct_ids, struct_masks, struct_tgt_ids, struct_tgt_lens, seg_ids, past_ids, middle_ids, future_ids
 
-def generate_transxl(model, song_ids, struct_ids, struct_indices, cuda, seg_size, tokenizer, max_gen_len, bar_num=None, half_struct=None):
+def experience_transxl(model, songs, seg_size, tokenizer, max_gen_len, save_path=None, cuda=True, bar_num=None, struct_ratio=1.0):
     model.eval()
     model = model.cuda() if cuda else model
 
-    struct_seqs, struct_seq_masks, struct_masks = tokenizer.extract_struct(song_ids, struct_ids, struct_indices, half_content=half_struct)
+    song_ids, _, struct_ids, struct_indices = tokenize(songs, tokenizer)
+
+    struct_seqs, struct_seq_masks, struct_masks = tokenizer.extract_struct(song_ids, struct_ids, struct_indices, struct_ratio=struct_ratio)
+    song_ids, struct_ids, struct_masks, struct_tgt_ids, struct_tgt_lens, seg_ids, past_ids, middle_ids, future_ids = \
+        make_generation_data(song_ids, struct_ids, struct_indices, struct_masks, model, tokenizer, first_appear=True)
+
+    #gen_song_ids = []
+    pbar = tqdm(desc="Generating", total=len(song_ids))
+    for i in range(len(song_ids)):
+        song_idx = i
+        #gen_song_ids.append(struct_seqs[i][struct_tgt_ids[i]][struct_seq_masks[i][struct_tgt_ids[i]] == 0].tolist())
+        #continue
+
+        bar_num = struct_tgt_lens[i]
+        result = [tokenizer.bar_id(bar_num)]
+        song_id = torch.LongTensor(song_ids[i] + [tokenizer.bar_id(bar_num)])[None].to(model.device)
+        struct_id = torch.LongTensor(struct_ids[i] + [struct_tgt_ids[i]])[None].to(model.device)
+        struct_mask = torch.LongTensor(struct_masks[i] + [0])[None].to(model.device)
+        seg_id = torch.LongTensor(seg_ids[i] + [model.middle_id()])[None].to(model.device)
+        struct_seq = struct_seqs[i][None].to(model.device)
+        struct_seq_mask = struct_seq_masks[i][None].to(model.device)
+
+        # limit segment length not longer than memory length
+        seg_size = model.mem_len if model.mem_len < seg_size else seg_size
+
+        """
+        generate momery
+        """
+        gen_id = None
+        mems = None
+        #for seg_idx in range(0, len(prompt), seg_size): # split a long sequence into small segments
+
+        output = model(
+            input_ids=song_id,
+            struct_ids=struct_id,
+            struct_masks=struct_mask,
+            struct_seqs=struct_seq,
+            struct_seq_masks=struct_seq_mask,
+            token_order_ids=seg_id,
+            mems=None
+        )
+        mems = output.mems
+        mem_order_ids = output.mem_order_ids
+
+        #output_ids = torch.argmax(output.pred_scores, dim=-1)
+        while True:
+            output_ids = tokenizer.sample(output.pred_scores)
+            gen_id = output_ids[0, -1]
+            if tokenizer.is_legal(gen_id):
+                break
+            else:
+                print("illegal generated id:", tokenizer.id_to_token(gen_id))
+        result.append(gen_id.tolist())
+
+        """
+        generate new contents
+        """
+        #output_ids = torch.argmax(output.pred_scores, dim=-1)
+        prev_bar_num = bar_num
+        while True:
+            song_id = gen_id[None, None].to(model.device)
+            seg_id = torch.LongTensor([model.middle_id()])[None].to(model.device)
+            struct_id = torch.LongTensor([struct_tgt_ids[i]])[None].to(model.device)
+            struct_mask = None
+
+            #output = model(input_ids=segs, token_type_ids=type_ids, mems=mems)
+            output = model(
+                input_ids=song_id,
+                struct_ids=struct_id,
+                struct_masks=struct_mask,
+                struct_seqs=struct_seq,
+                struct_seq_masks=struct_seq_mask,
+                token_order_ids=seg_id,
+                mems=mems,
+                mem_order_ids=mem_order_ids,
+            )
+            mems = output.mems
+            mem_order_ids = output.mem_order_ids
+
+            #gen_id = torch.argmax(output.pred_scores, dim=-1)[0, -1].item()
+            while True:
+                output_ids = tokenizer.sample(output.pred_scores)
+                gen_id = output_ids[0, -1]
+                if tokenizer.is_legal(gen_id):
+                    break
+                else:
+                    print("illegal generated id:", tokenizer.id_to_token(gen_id))
+            if tokenizer.is_bar(gen_id):
+                if prev_bar_num == 1:
+                    break
+                else:
+                    prev_bar_num = int(tokenizer.id_to_token(gen_id).rsplit(")")[0].split("(")[1])
+            if tokenizer.is_eos(gen_id):
+                break
+            result.append(gen_id.tolist())
+            #if len(result) >= max_gen_len:
+            #    break
+        #gen_song_ids.append((past_ids[i] + result + future_ids[i], past_ids[i], middle_ids[i], future_ids[i], result))
+        song_id = past_ids[i] + result + future_ids[i]
+
+        #song_id, past_id, middle_id, future_id, result_id = gen_song_ids[i]
+        gen_song = tokenizer.decode(tokenizer.id_to_token(song_id), Song.copy(songs[i], with_content=False))
+        past = tokenizer.decode(tokenizer.id_to_token(past_ids[i]), Song.copy(songs[i], with_content=False))
+        middle = tokenizer.decode(tokenizer.id_to_token(middle_ids[i]), Song.copy(songs[i], with_content=False))
+        future = tokenizer.decode(tokenizer.id_to_token(future_ids[i]), Song.copy(songs[i], with_content=False))
+        result = tokenizer.decode(tokenizer.id_to_token(result), Song.copy(songs[i], with_content=False))
+
+        #ckpt_file = os.path.basename(args.ckpt_path)
+        #save_dir = os.path.join(args.save_path, f"{math.floor(ckpt.loss*10)/10.0}")
+        #save_dir = os.path.join(args.save_path, ckpt_file.split(".")[0])
+        save_dir = save_path
+        if not os.path.isdir(save_dir):
+            os.makedirs(save_dir)
+        gen_song.save(os.path.join(save_dir, f"{song_idx}.midi"))
+        gen_song.save_fig(os.path.join(save_dir, f"{song_idx}.png"))
+        with open(os.path.join(save_dir, f"{song_idx}_past.pickle"), 'wb') as f:
+            pickle.dump(past, f)
+        with open(os.path.join(save_dir, f"{song_idx}_middle.pickle"), 'wb') as f:
+            pickle.dump(middle, f)
+        with open(os.path.join(save_dir, f"{song_idx}_future.pickle"), 'wb') as f:
+            pickle.dump(future, f)
+        with open(os.path.join(save_dir, f"{song_idx}_result.pickle"), 'wb') as f:
+            pickle.dump(result, f)
+        #with open(f"./gen_midi/{song.name}.txt", "w") as f:
+        #    f.write("\n".join(text))
+        pbar.update(1)
+    pbar.close()
+
+    #return gen_song_ids
+
+def generate_transxl(model, song_ids, struct_ids, struct_indices, cuda, seg_size, tokenizer, max_gen_len, bar_num=None, struct_ratio=1.0):
+    model.eval()
+    model = model.cuda() if cuda else model
+
+    struct_seqs, struct_seq_masks, struct_masks = tokenizer.extract_struct(song_ids, struct_ids, struct_indices, struct_ratio=struct_ratio)
     song_ids, struct_ids, struct_masks, struct_tgt_ids, struct_tgt_lens, seg_ids, past_ids, middle_ids, future_ids = \
         make_generation_data(song_ids, struct_ids, struct_indices, struct_masks, model, tokenizer)
 

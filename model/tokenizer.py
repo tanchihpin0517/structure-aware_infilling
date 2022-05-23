@@ -611,7 +611,7 @@ class Tokenizer:
         else:
             return True # always legal while not using cp
 
-    def extract_struct(self, song_ids, struct_ids, struct_indices, max_struct_len=512, mask_first_time=False, half_content=False):
+    def extract_struct(self, song_ids, struct_ids, struct_indices, max_struct_len=512, mask_first_time=False, struct_ratio=None):
         song_ids = deepcopy(song_ids)
         struct_ids = deepcopy(struct_ids)
         struct_indices = deepcopy(struct_indices)
@@ -630,6 +630,7 @@ class Tokenizer:
         """
         struct_masks = []
         struct_lens = []
+        print("struct ratio:", struct_ratio)
 
         for i in range(len(song_ids)):
             song_id = song_ids[i]
@@ -646,8 +647,11 @@ class Tokenizer:
                     s_end += 1
                 next_start = s_end
 
-                if half_content:
-                    s_end = (s_start + s_end) // 2
+                #if half_content:
+                #    s_end = (s_start + s_end) // 2
+
+                if struct_ratio:
+                    s_end = s_start + int((s_end-s_start) * struct_ratio)
 
                 sid = struct_id[s_start]
                 slen = s_end - s_start

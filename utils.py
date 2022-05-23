@@ -135,7 +135,7 @@ def log_status():
     print("log stdout", this.log_stdout)
     print("log file:", this.log_file)
 
-def melody_simularity(c, q):
+def melody_simularity(q, c):
     """
     c: compared
     q: query
@@ -145,14 +145,18 @@ def melody_simularity(c, q):
 
     reference: https://www.cs.cmu.edu/~rbd/papers/icmc02melodicsimilarity.pdf
     """
+    if len(q) == 0 or len(c) == 0:
+        return 0
+
     c = np.array(c)
     q = np.array(q)
     d = []
     for s in range(12):
         r1 = _melody_simularity_impl(c+s, q)
-        r2 = _melody_simularity_impl(q, c+s)
-        d.append((r1+r2) / 2)
-        print(c, q+s, d[-1])
+        #r2 = _melody_simularity_impl(q, c+s)
+        #d.append((r1+r2) / 2)
+        d.append(r1)
+        #print(c, q+s, d[-1])
     return min(d)
 
 def _linear_distance(p1, p2):
@@ -160,18 +164,17 @@ def _linear_distance(p1, p2):
     return min(d, 12-d)
 
 def _melody_simularity_impl(a, b, verbose=False):
-
     """
-    A = (a1, a2, ..., am)
-    B = b1, b2, ..., bn
+    A = (a1, a2, ..., am) : compared
+    B = (b1, b2, ..., bn) : query
 
     d(i, j) represents the dissimilarity between (a1, a2, ..., ai) and (b1, b2, ..., bj)
     """
     a = np.array(a)
     b = np.array(b)
 
-    a = np.concatenate((np.array([a.mean()]), a))
-    b = np.concatenate((np.array([b.mean()]), b))
+    a = np.concatenate((np.array([(a%12).mean()]), a))
+    b = np.concatenate((np.array([(b%12).mean()]), b))
     d = np.zeros([len(a), len(b)])
     w = _linear_distance
 
@@ -182,9 +185,9 @@ def _melody_simularity_impl(a, b, verbose=False):
 
     # initialize
     for i in range(d.shape[0]):
-        d[i, 0] = 0
+        d[i, 0] = d[i-1, 0] + w(a[i], b[0])
     for j in range(1, d.shape[1]):
-        d[0, j] = d[0, j-1] + w((a[1:]%12).mean(), b[j])
+        d[0, j] = d[0, j-1] + w(a[0], b[j])
 
     for i in range(d.shape[0]):
         d[i, -1] = math.inf
@@ -217,6 +220,8 @@ def _melody_simularity_impl(a, b, verbose=False):
         for j in range(1, d.shape[1]):
             d[i, j] = min(
                 d[i-1, j-1],
+                #d[i-2, j-1] + (w(a[i-1], b[j]) if i > 1 else 0),
+                #d[i-1, j-2] + (w(a[i], b[j-1]) if j > 1 else 0),
                 d[i-2, j-1] + w(a[i-1], b[j]),
                 d[i-1, j-2] + w(a[i], b[j-1]),
             ) + w(a[i], b[j])
@@ -224,19 +229,20 @@ def _melody_simularity_impl(a, b, verbose=False):
     if verbose:
         print(d)
 
-    candidates = np.concatenate((d[1:, -1], d[-1, 1:]))
+    #candidates = np.concatenate((d[1:, -1], d[-1, 1:]))
+    candidates = d[:, -1]
     result = candidates.min()
 
     return result
 
 if __name__ == "__main__":
     a = np.array([7, 2, 3, 4, 7, 7])
-    b = np.array([2,3,4])
+    b = np.array([2,2, 2,3,4])
     print('original:',a,'\nquery:',b)
-    print(_melody_simularity_impl(a, b))
-    print(_melody_simularity_impl(b, a))
+    #print(_melody_simularity_impl(a, b, verbose=True))
+    #print(_melody_simularity_impl(b, a))
     print(melody_simularity(a, b))
-    print(_melody_simularity_impl(a, b, verbose=True))
-    print(_melody_simularity_impl(a, b+8, verbose=True))
-    print(_melody_simularity_impl(b+8, a, verbose=True))
+    #print(_melody_simularity_impl(a, b, verbose=True))
+    #print(_melody_simularity_impl(a, b+8, verbose=True))
+    #print(_melody_simularity_impl(b+8, a, verbose=True))
 

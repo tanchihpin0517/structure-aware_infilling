@@ -699,7 +699,7 @@ class TransformerXL(nn.Module):
         struct_masks: list,
         bar_ids: list,
         tokenizer,
-        bar_range_num = 6,
+        bar_range_num = 8,
         max_seq_len = None,
         only_middle=True,
     ):

@@ -56,7 +56,7 @@ class Bar:
 
     def __repr__(self):
         s = []
-        s.append(f"Bar(struct={self.struct}, start={self.start}, end={self.end})")
+        s.append(f"Bar(struct={self.struct}, start={self.start}, end={self.end}), struct={self.struct_id, self.struct_idx}")
         for e in self.events:
             s.append(" "*4 + str(e))
         return "\n".join(s)
@@ -87,13 +87,15 @@ class Song:
     struct_indices: List[Tuple[str, int, int]] = field(default_factory=list)
 
     @staticmethod
-    def copy(song, with_content=True):
+    def copy(song, with_content=True, bars=None):
         r = dataclasses.replace(
             song,
             bars=list(),
             struct_indices=list(),
         )
-        if with_content:
+        if bars is not None:
+            r.bars = deepcopy(bars)
+        elif with_content:
             r.bars = deepcopy(song.bars)
             r.struct_indices = deepcopy(song.struct_indices)
         return r
@@ -124,9 +126,22 @@ class Song:
         r.bars = r.bars[start:end]
         return r
 
-    def save(self, file):
+    def save(self, file, time_strip=False):
         midi_data = pmidi.PrettyMIDI(initial_tempo=self.bpm)
         inst = pmidi.Instrument(program=0)
+
+        start_bar_time = 0.0
+        if time_strip:
+            found = False
+            for bar in self.bars:
+                for event in bar.events:
+                    if len(event.notes) > 0:
+                        start_bar_time = bar.events[0].start
+                        found = True
+                        break
+                if found:
+                    break
+
         for event in self.flatten_events():
             event_time = event.end - event.start
             for note in event.notes:
@@ -134,8 +149,8 @@ class Song:
                     #velocity=note.velocity,
                     velocity=100,
                     pitch=note.pitch,
-                    start=event.start,
-                    end=event.start+note.duration*event_time
+                    start=event.start-start_bar_time,
+                    end=event.start+note.duration*event_time-start_bar_time
                 )
                 inst.notes.append(midi_note)
         midi_data.instruments.append(inst)

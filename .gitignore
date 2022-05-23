@@ -12,3 +12,7 @@ test*.sh
 pop909_test/
 /log*
 *.png
+dataset/*.pickle.*
+dataset/testing_data_origin
+experience
+experiment_result/
