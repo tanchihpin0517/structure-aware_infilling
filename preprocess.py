@@ -214,9 +214,16 @@ def pop_909_map_func(args):
         if end != len(song.bars):
             song.struct_indices.append((None, end, len(song.bars)))
 
-    for struct, start, end in song.struct_indices:
+    struct_count = 0
+    appear = {None: -1}
+    for idx, (struct, start, end) in enumerate(song.struct_indices):
+        if struct not in appear:
+            appear[struct] = struct_count
+            struct_count += 1
         for i in range(start, end):
             song.bars[i].struct = struct
+            song.bars[i].struct_id = appear[struct]
+            song.bars[i].struct_idx = idx
 
     # set bar's (start, end) and expand events to the level of 16th(depands on beat_division) notes
     for bar in song.bars:

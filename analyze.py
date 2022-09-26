@@ -5,6 +5,7 @@ import sys
 import metrics
 import pandas as pd
 import seaborn as sns
+from .model.tokenizer import Tokenizer
 
 def analyze(data_file):
     print("file:", data_file)
@@ -55,6 +56,13 @@ def analyze(data_file):
     print(f"longest struct: {struct_lens.max()}")
     print(f"number and ratio of songs which contain at least one struct longer than 32:", error, error/len(songs))
     print(f"number of struct types:", len(struct_types))
+
+    bar_len = []
+    for song in songs:
+        bar_len.append(len(song.bars))
+    bar_len = np.array(bar_len)
+    print(f"average bars of each song: {bar_len.mean()}")
+    print(f"mean+2*std bars of each song: {bar_len.mean() + 2*bar_len.std()}")
 
 def draw_sim(file_dir):
     files = sorted(os.listdir(file_dir))
@@ -109,6 +117,8 @@ def skyline_pitch(song):
 
 if __name__ == "__main__":
     data_file = "/screamlab/home/tanch/structure-aware_infilling/dataset/pop909.pickle"
-    #analyze(data_file=data_file)
-    draw_sim("gen_midi_transxl_struct_infilling_enc/validation_loss_1")
+    analyze(data_file=data_file)
+
+    tokenizer = Tokenizer()
+    #draw_sim("gen_midi_transxl_struct_infilling_enc/validation_loss_1")
 

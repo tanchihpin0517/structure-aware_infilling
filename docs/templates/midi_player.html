@@ -1,22 +1,22 @@
-<!-- input: losses, song_idx -->
+<!-- input: models, song_idx -->
 <section id="inpainted-music-song-{{song_idx}}">
   <h3>Song {{song_idx}}</h3>
   <div class='anchor-container'>
-    {% with gh_url="https://cdn.jsdelivr.net/gh/tanchihpin0517/variable-length-piano-expansion" sel_loss="0.0" %}
-    {% for loss in losses %}
-    {% if loss == sel_loss %}
-    <a {% if github %}midi-url="{{gh_url}}/docs/assets/songs/{{loss}}/{{song_idx}}.midi"{% else %}midi-url="assets/songs/{{loss}}/{{song_idx}}.midi"{% endif %}
-      class='selected'>{{loss}}</a>
+    {% with sel_model="Ours" %}
+    {% for model in models %}
+    {% if model == sel_model %}
+    <a {% if github %}midi-url="{{gh_url}}/docs/assets/songs/{{model}}/{{song_idx}}.midi"{% else %}midi-url="assets/songs/{{model}}/{{song_idx}}.midi"{% endif %}
+      class='selected'>{{model}}</a>
     {% else %}
-    <a {% if github %}midi-url="{{gh_url}}/docs/assets/songs/{{loss}}/{{song_idx}}.midi"{% else %}midi-url="assets/songs/{{loss}}/{{song_idx}}.midi"{% endif %}>{{loss}}</a>
+    <a {% if github %}midi-url="{{gh_url}}/docs/assets/songs/{{model}}/{{song_idx}}.midi"{% else %}midi-url="assets/songs/{{model}}/{{song_idx}}.midi"{% endif %}>{{model}}</a>
     {% endif %}
     {% endfor %}
   </div>
   <midi-visualizer id='inpainted-music-song-{{song_idx}}-visualizer'
-    {% if github %}src="{{gh_url}}/docs/assets/songs/{{sel_loss}}/{{song_idx}}.midi"{% else %}src="assets/songs/{{sel_loss}}/{{song_idx}}.midi"{% endif %}>
+    {% if github %}src="{{gh_url}}/docs/assets/songs/{{sel_model}}/{{song_idx}}.midi"{% else %}src="assets/songs/{{sel_model}}/{{song_idx}}.midi"{% endif %}>
   </midi-visualizer>
   <midi-player id='inpainted-music-song-{{song_idx}}-player'
-    {% if github %}src="{{gh_url}}/docs/assets/songs/{{sel_loss}}/{{song_idx}}.midi"{% else %}src="assets/songs/{{sel_loss}}/{{song_idx}}.midi"{% endif %}
+    {% if github %}src="{{gh_url}}/docs/assets/songs/{{sel_model}}/{{song_idx}}.midi"{% else %}src="assets/songs/{{sel_model}}/{{song_idx}}.midi"{% endif %}
     sound-font="https://storage.googleapis.com/magentadata/js/soundfonts/salamander"
     visualizer="#inpainted-music-song-{{song_idx}}-visualizer">
   </midi-player>

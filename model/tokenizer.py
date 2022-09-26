@@ -232,21 +232,12 @@ class Tokenizer:
         struct_id = []
         struct_index = []
         bar_count = 0
+        struct_range = []
+        s_range_start = 0
 
-        tokens = []
-        if self.use_cp:
-            tokens.append([
-                self.bar(self.BOS),
-                self.tempo(self.BAR),
-                self.pos(self.BAR),
-                self.pitch(self.BAR),
-                #self.vel(self.BAR),
-                self.dur(self.BAR),
-                self.struct(self.NONE)
-            ])
-        else:
-            tokens.append(self.bar(self.BOS))
+        tokens = [self.bar(self.BOS)]
         bar_id.append(bar_count) # bos is not a new bar
+        sid = self.NONE_ID
         struct_id.append(self.NONE_ID)
         struct_index.append(0)
 
@@ -255,6 +246,9 @@ class Tokenizer:
 
         for s_label, s_start, s_end in song.struct_indices:
             s_len = s_end - s_start
+
+            struct_range.append((sid, s_range_start, len(struct_index)))
+            s_range_start = len(struct_index)
 
             if s_label is None:
                 struct = self.struct(self.NONE)
@@ -268,87 +262,59 @@ class Tokenizer:
             sidx = struct_index[-1] + 1
 
             for bar_i, bar in enumerate(song.bars[s_start:s_end]):
-                ## skip empty bar
-                #if bar.empty():
-                #    continue
-
-
                 # bar
-                if self.use_cp:
-                    tokens.append([self.bar(s_len-bar_i) if self.use_bar_cd else self.bar(1),
-                                   self.tempo(self.BAR),
-                                   self.pos(self.BAR),
-                                   self.pitch(self.BAR),
-                                   #self.vel(self.BAR),
-                                   self.dur(self.BAR),
-                                   struct
-                    ])
-                else:
-                    tokens.append(self.bar(s_len-bar_i) if self.use_bar_cd else self.bar(1))
+                tokens.append(self.bar(s_len-bar_i) if self.use_bar_cd else self.bar(1))
                 bar_id.append(bar_count)
                 bar_count += 1
                 struct_id.append(sid)
                 struct_index.append(sidx)
 
-                if not self.use_cp:
-                    tokens.append(struct)
-                    bar_id.append(bar_count)
-                    struct_id.append(sid)
-                    struct_index.append(sidx)
+                tokens.append(struct)
+                bar_id.append(bar_count)
+                struct_id.append(sid)
+                struct_index.append(sidx)
 
                 # note
                 for event in bar.events:
                     tempo = self._fit_range(event.tempo, self.tempo_base, self.tempo_tick_num, 4)
+                    if len(event.notes) > 0:
+                        pos = event.notes[0].onset
+                        tokens.extend([
+                            self.tempo(tempo),
+                            self.pos(pos),
+                        ])
+                        bar_id.extend([bar_count] * 2)
+                        struct_id.extend([sid] * 2)
+                        struct_index.extend([sidx] * 2)
+
                     for note in event.notes:
-                        pos = note.onset
                         pitch = note.pitch
-                        vel = self._fit_range(note.velocity, self.vel_base, self.vel_tick_num, 4)
+                        #vel = self._fit_range(note.velocity, self.vel_base, self.vel_tick_num, 4)
                         dur = note.duration
                         if dur > self.max_dur:
                             dur = self.max_dur
 
-                        if self.use_cp:
-                            tokens.append([self.bar(0),
-                                           self.tempo(tempo),
-                                           self.pos(pos),
-                                           self.pitch(pitch),
-                                           #self.vel(vel),
-                                           self.dur(dur),
-                                           struct
-                            ])
-                            bar_id.append(bar_count)
-                            struct_id.append(sid)
-                            struct_index.append(sidx)
-                        else:
-                            tokens.extend([
-                                self.tempo(tempo),
-                                self.pos(pos),
-                                self.pitch(pitch),
-                                #self.vel(vel),
-                                self.dur(dur),
-                            ])
-                            bar_id.extend([bar_count] * 4)
-                            struct_id.extend([sid] * 4)
-                            struct_index.extend([sidx] * 4)
+                        tokens.extend([
+                            self.pitch(pitch),
+                            self.dur(dur),
+                        ])
+                        bar_id.extend([bar_count] * 2)
+                        struct_id.extend([sid] * 2)
+                        struct_index.extend([sidx] * 2)
+
+        struct_range.append((sid, s_range_start, len(struct_index)))
 
         if with_eos:
-            if self.use_cp:
-                tokens.append([self.bar(self.EOS),
-                               self.tempo(self.BAR),
-                               self.pos(self.BAR),
-                               self.pitch(self.BAR),
-                               #self.vel(self.BAR),
-                               self.dur(self.BAR),
-                               self.struct(self.NONE),
-                ])
-            else:
-                tokens.append(self.bar(self.EOS))
+            tokens.append(self.bar(self.EOS))
             bar_id.append(bar_count)
             struct_id.append(self.NONE_ID)
             struct_index.append(struct_index[-1] + 1)
 
+        del struct_range[0] # remove range of BOS
+
         assert len(tokens) == len(bar_id) == len(struct_id) == len(struct_index)
-        return tokens, bar_id, struct_id, struct_index
+        assert len(song.struct_indices) == len(struct_range)
+        return tokens, bar_id, struct_id, struct_index, struct_range
 
     def decode(self, tokens, empty_song: Song) -> Song:
         assert len(empty_song.bars) == 0
@@ -601,7 +567,7 @@ class Tokenizer:
         else:
             return True # always legal while not using cp
 
-    def extract_struct(self, song_ids, struct_ids, struct_indices, max_struct_len=512, mask_first_time=False):
+    def extract_struct(self, song_ids, struct_ids, struct_indices, max_struct_len=512, mask_first_time=False, struct_ratio=None):
         song_ids = deepcopy(song_ids)
         struct_ids = deepcopy(struct_ids)
         struct_indices = deepcopy(struct_indices)
@@ -620,6 +586,7 @@ class Tokenizer:
         """
         struct_masks = []
         struct_lens = []
+        print("struct ratio:", struct_ratio)
 
         for i in range(len(song_ids)):
             song_id = song_ids[i]
@@ -634,6 +601,13 @@ class Tokenizer:
                 s_end = s_start
                 while s_end < len(struct_index) and struct_index[s_end] == struct_index[s_start]:
                     s_end += 1
+                next_start = s_end
+
+                #if half_content:
+                #    s_end = (s_start + s_end) // 2
+
+                if struct_ratio:
+                    s_end = s_start + int((s_end-s_start) * struct_ratio)
 
                 sid = struct_id[s_start]
                 slen = s_end - s_start
@@ -644,14 +618,14 @@ class Tokenizer:
                     input tokens will not attend to struct sequnces which appear at the first time
                     """
                     if sid == self.NONE_ID or sid not in appear:
-                        mask.extend([1] * slen)
+                        mask.extend([1] * (next_start - s_start))
                     else:
-                        mask.extend([0] * slen)
+                        mask.extend([0] * (next_start - s_start))
                 else:
                     if sid == self.NONE_ID:
-                        mask.extend([1] * slen)
+                        mask.extend([1] * (next_start - s_start))
                     else:
-                        mask.extend([0] * slen)
+                        mask.extend([0] * (next_start - s_start))
 
 
                 if sid != self.NONE_ID and sid not in appear:
@@ -664,7 +638,7 @@ class Tokenizer:
                     struct_seq_masks[i][sid] = seq_mask
                     struct_lens.append(slen)
 
-                s_start = s_end
+                s_start = next_start
             assert len(song_id) == len(mask)
             struct_masks.append(mask)
 
