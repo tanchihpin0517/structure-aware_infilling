@@ -61,6 +61,10 @@ def main(data_file, save_file):
             seg.bars = data['past'] + data['target'] + data['future']
             seg.save(f"./dataset/testing_data_origin/{count}_seg.midi", time_strip=True)
 
+            seg_struct = music.Song.copy(song, with_content=False)
+            seg_struct.bars = data['struct']
+            seg_struct.save(f"./dataset/testing_data_origin/{count}_struct.midi", time_strip=True)
+
             count += 1
 
     print(len(testing_data))

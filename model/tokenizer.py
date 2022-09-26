@@ -232,21 +232,12 @@ class Tokenizer:
         struct_id = []
         struct_index = []
         bar_count = 0
+        struct_range = []
+        s_range_start = 0
 
-        tokens = []
-        if self.use_cp:
-            tokens.append([
-                self.bar(self.BOS),
-                self.tempo(self.BAR),
-                self.pos(self.BAR),
-                self.pitch(self.BAR),
-                #self.vel(self.BAR),
-                self.dur(self.BAR),
-                self.struct(self.NONE)
-            ])
-        else:
-            tokens.append(self.bar(self.BOS))
+        tokens = [self.bar(self.BOS)]
         bar_id.append(bar_count) # bos is not a new bar
+        sid = self.NONE_ID
         struct_id.append(self.NONE_ID)
         struct_index.append(0)
 
@@ -255,6 +246,9 @@ class Tokenizer:
 
         for s_label, s_start, s_end in song.struct_indices:
             s_len = s_end - s_start
+
+            struct_range.append((sid, s_range_start, len(struct_index)))
+            s_range_start = len(struct_index)
 
             if s_label is None:
                 struct = self.struct(self.NONE)
@@ -268,33 +262,17 @@ class Tokenizer:
             sidx = struct_index[-1] + 1
 
             for bar_i, bar in enumerate(song.bars[s_start:s_end]):
-                ## skip empty bar
-                #if bar.empty():
-                #    continue
-
-
                 # bar
-                if self.use_cp:
-                    tokens.append([self.bar(s_len-bar_i) if self.use_bar_cd else self.bar(1),
-                                   self.tempo(self.BAR),
-                                   self.pos(self.BAR),
-                                   self.pitch(self.BAR),
-                                   #self.vel(self.BAR),
-                                   self.dur(self.BAR),
-                                   struct
-                    ])
-                else:
-                    tokens.append(self.bar(s_len-bar_i) if self.use_bar_cd else self.bar(1))
+                tokens.append(self.bar(s_len-bar_i) if self.use_bar_cd else self.bar(1))
                 bar_id.append(bar_count)
                 bar_count += 1
                 struct_id.append(sid)
                 struct_index.append(sidx)
 
-                if not self.use_cp:
-                    tokens.append(struct)
-                    bar_id.append(bar_count)
-                    struct_id.append(sid)
-                    struct_index.append(sidx)
+                tokens.append(struct)
+                bar_id.append(bar_count)
+                struct_id.append(sid)
+                struct_index.append(sidx)
 
                 # note
                 for event in bar.events:
@@ -310,55 +288,33 @@ class Tokenizer:
                         struct_index.extend([sidx] * 2)
 
                     for note in event.notes:
-                        #pos = note.onset
                         pitch = note.pitch
-                        vel = self._fit_range(note.velocity, self.vel_base, self.vel_tick_num, 4)
+                        #vel = self._fit_range(note.velocity, self.vel_base, self.vel_tick_num, 4)
                         dur = note.duration
                         if dur > self.max_dur:
                             dur = self.max_dur
 
-                        if self.use_cp:
-                            tokens.append([self.bar(0),
-                                           self.tempo(tempo),
-                                           self.pos(pos),
-                                           self.pitch(pitch),
-                                           #self.vel(vel),
-                                           self.dur(dur),
-                                           struct
-                            ])
-                            bar_id.append(bar_count)
-                            struct_id.append(sid)
-                            struct_index.append(sidx)
-                        else:
-                            tokens.extend([
-                                #self.tempo(tempo),
-                                #self.pos(pos),
-                                self.pitch(pitch),
-                                #self.vel(vel),
-                                self.dur(dur),
-                            ])
-                            bar_id.extend([bar_count] * 2)
-                            struct_id.extend([sid] * 2)
-                            struct_index.extend([sidx] * 2)
+                        tokens.extend([
+                            self.pitch(pitch),
+                            self.dur(dur),
+                        ])
+                        bar_id.extend([bar_count] * 2)
+                        struct_id.extend([sid] * 2)
+                        struct_index.extend([sidx] * 2)
+
+        struct_range.append((sid, s_range_start, len(struct_index)))
 
         if with_eos:
-            if self.use_cp:
-                tokens.append([self.bar(self.EOS),
-                               self.tempo(self.BAR),
-                               self.pos(self.BAR),
-                               self.pitch(self.BAR),
-                               #self.vel(self.BAR),
-                               self.dur(self.BAR),
-                               self.struct(self.NONE),
-                ])
-            else:
-                tokens.append(self.bar(self.EOS))
+            tokens.append(self.bar(self.EOS))
             bar_id.append(bar_count)
             struct_id.append(self.NONE_ID)
             struct_index.append(struct_index[-1] + 1)
 
+        del struct_range[0] # remove range of BOS
+
         assert len(tokens) == len(bar_id) == len(struct_id) == len(struct_index)
-        return tokens, bar_id, struct_id, struct_index
+        assert len(song.struct_indices) == len(struct_range)
+        return tokens, bar_id, struct_id, struct_index, struct_range
 
     def decode(self, tokens, empty_song: Song) -> Song:
         assert len(empty_song.bars) == 0

@@ -9,94 +9,212 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import utils
+from tqdm import tqdm
+import multiprocessing as mp
+
+def stats_func(args):
+    our_dir, det_dir, vli_dir, no_order_dir, i = args
+    results = []
+
+    with open(os.path.join(our_dir, f"{i}_past.pickle"), "rb") as f:
+        past = pickle.load(f)
+    with open(os.path.join(our_dir, f"{i}_future.pickle"), "rb") as f:
+        future = pickle.load(f)
+    with open(os.path.join(our_dir, f"{i}_middle.pickle"), "rb") as f:
+        gt = pickle.load(f)
+
+
+    """ ours """
+    with open(os.path.join(our_dir, f"{i}_result.pickle"), "rb") as f:
+        our_result = pickle.load(f)
+
+    h = H(get_pitch(our_result), get_pitch(past)+get_pitch(future))
+    gs = GS(get_onset(our_result), get_onset(past)+get_onset(future))
+    #print(get_pitch(middle)[:16])
+    results.append(h)
+    results.append(gs)
+    results.append(utils.melody_simularity(get_pitch(our_result), get_pitch(gt)))
+
+    """ det """
+    with open(os.path.join(det_dir, f"{i}_result.pickle"), "rb") as f:
+        det_result = pickle.load(f)
+
+    h = H(get_pitch(det_result), get_pitch(past)+get_pitch(future))
+    gs = GS(get_onset(det_result), get_onset(past)+get_onset(future))
+    #print(get_pitch(middle)[:16])
+    results.append(h)
+    results.append(gs)
+    results.append(utils.melody_simularity(get_pitch(det_result), get_pitch(gt)))
+
+    """ vli """
+    vli_result = load_vli_result(os.path.join(vli_dir, f"{i}_middle.midi"))
+    h = H(get_pitch(vli_result), get_pitch(past)+get_pitch(future))
+    gs = GS(get_onset(vli_result), get_onset(past)+get_onset(future))
+    results.append(h)
+    results.append(gs)
+    results.append(utils.melody_simularity(get_pitch(vli_result), get_pitch(gt)))
+
+    """ ground truth """
+    h = H(get_pitch(gt), get_pitch(past)+get_pitch(future))
+    gs = GS(get_onset(gt), get_onset(past)+get_onset(future))
+    #print(get_pitch(middle)[:16])
+    results.append(h)
+    results.append(gs)
+    results.append(utils.melody_simularity(get_pitch(gt), get_pitch(gt)))
+
+    """ struct """
+    with open(os.path.join(our_dir, f"{i}_struct.pickle"), "rb") as f:
+        struct_result = pickle.load(f)
+
+    h = H(get_pitch(struct_result), get_pitch(past)+get_pitch(future))
+    gs = GS(get_onset(struct_result), get_onset(past)+get_onset(future))
+    #print(get_pitch(middle)[:16])
+    results.append(h)
+    results.append(gs)
+    results.append(utils.melody_simularity(get_pitch(struct_result), get_pitch(gt)))
+
+    """ no order """
+    with open(os.path.join(no_order_dir, f"{i}_result.pickle"), "rb") as f:
+        no_order_result = pickle.load(f)
+
+    h = H(get_pitch(no_order_result), get_pitch(past)+get_pitch(future))
+    gs = GS(get_onset(no_order_result), get_onset(past)+get_onset(future))
+    #print(get_pitch(middle)[:16])
+    results.append(h)
+    results.append(gs)
+    results.append(utils.melody_simularity(get_pitch(no_order_result), get_pitch(gt)))
+
+    return results
 
 def main():
-    struct_dir = "/screamlab/home/tanch/structure-aware_infilling/experiment_result"
+    our_dir = "/screamlab/home/tanch/structure-aware_infilling/experiment_result"
     det_dir = "/screamlab/home/tanch/double_encoder_transformer/experiment_result"
     vli_dir = "/screamlab/home/tanch/variable-length-piano-expansion/infilling_result/loss30"
+    no_order_dir = "/screamlab/home/tanch/structure-aware_infilling/experiment_result_no_order"
 
-    struct_h = []
+    our_h = []
     det_h = []
     vli_h = []
     gt_h = []
+    struct_h = []
+    no_order_h = []
 
-    struct_gs, det_gs, vli_gs, gt_gs = [], [], [], []
-    struct_d, det_d, vli_d, gt_d = [], [], [], []
+    our_gs, det_gs, vli_gs, gt_gs, struct_gs, no_order_gs = [], [], [], [], [], []
+    our_d, det_d, vli_d, gt_d, struct_d, no_order_d = [], [], [], [], [], []
 
-    for i in range(156):
-        with open(os.path.join(struct_dir, f"{i}_past.pickle"), "rb") as f:
-            past = pickle.load(f)
-        with open(os.path.join(struct_dir, f"{i}_future.pickle"), "rb") as f:
-            future = pickle.load(f)
-        with open(os.path.join(struct_dir, f"{i}_middle.pickle"), "rb") as f:
-            gt = pickle.load(f)
+    with mp.Pool() as pool:
+        total = 156
+        stats_args = [(our_dir, det_dir, vli_dir, no_order_dir, i) for i in range(total)]
+        prog = tqdm(total=total)
+        for results in pool.imap(stats_func, stats_args):
+            our_h.append(results[0])
+            our_gs.append(results[1])
+            our_d.append(results[2])
 
+            det_h.append(results[3])
+            det_gs.append(results[4])
+            det_d.append(results[5])
 
-        with open(os.path.join(struct_dir, f"{i}_result.pickle"), "rb") as f:
-            struct_result = pickle.load(f)
+            vli_h.append(results[6])
+            vli_gs.append(results[7])
+            vli_d.append(results[8])
 
-        h = H(get_pitch(struct_result), get_pitch(past)+get_pitch(future))
-        gs = GS(get_onset(struct_result), get_onset(past)+get_onset(future))
-        #print(get_pitch(middle)[:16])
-        struct_h.append(h)
-        struct_gs.append(gs)
-        struct_d.append(utils.melody_simularity(get_pitch(struct_result), get_pitch(gt)))
+            gt_h.append(results[9])
+            gt_gs.append(results[10])
+            gt_d.append(results[11])
 
-        with open(os.path.join(det_dir, f"{i}_result.pickle"), "rb") as f:
-            det_result = pickle.load(f)
+            struct_h.append(results[12])
+            struct_gs.append(results[13])
+            struct_d.append(results[14])
 
-        h = H(get_pitch(det_result), get_pitch(past)+get_pitch(future))
-        gs = GS(get_onset(det_result), get_onset(past)+get_onset(future))
-        #print(get_pitch(middle)[:16])
-        det_h.append(h)
-        det_gs.append(gs)
-        det_d.append(utils.melody_simularity(get_pitch(det_result), get_pitch(gt)))
-
-        vli_result = load_vli_result(os.path.join(vli_dir, f"{i}_middle.midi"))
-        h = H(get_pitch(vli_result), get_pitch(past)+get_pitch(future))
-        gs = GS(get_onset(vli_result), get_onset(past)+get_onset(future))
-        vli_h.append(h)
-        vli_gs.append(gs)
-        vli_d.append(utils.melody_simularity(get_pitch(vli_result), get_pitch(gt)))
-
-        h = H(get_pitch(gt), get_pitch(past)+get_pitch(future))
-        gs = GS(get_onset(gt), get_onset(past)+get_onset(future))
-        #print(get_pitch(middle)[:16])
-        gt_h.append(h)
-        gt_gs.append(gs)
-        gt_d.append(utils.melody_simularity(get_pitch(gt), get_pitch(gt)))
+            no_order_h.append(results[15])
+            no_order_gs.append(results[16])
+            no_order_d.append(results[17])
+            #with open(os.path.join(our_dir, f"{i}_past.pickle"), "rb") as f:
+            #    past = pickle.load(f)
+            #with open(os.path.join(our_dir, f"{i}_future.pickle"), "rb") as f:
+            #    future = pickle.load(f)
+            #with open(os.path.join(our_dir, f"{i}_middle.pickle"), "rb") as f:
+            #    gt = pickle.load(f)
 
 
+            #with open(os.path.join(our_dir, f"{i}_result.pickle"), "rb") as f:
+            #    our_result = pickle.load(f)
 
-    struct_h = np.array(struct_h)
+            #h = H(get_pitch(our_result), get_pitch(past)+get_pitch(future))
+            #gs = GS(get_onset(our_result), get_onset(past)+get_onset(future))
+            ##print(get_pitch(middle)[:16])
+            #our_h.append(h)
+            #our_gs.append(gs)
+            #our_d.append(utils.melody_simularity(get_pitch(our_result), get_pitch(gt)))
+
+            #with open(os.path.join(det_dir, f"{i}_result.pickle"), "rb") as f:
+            #    det_result = pickle.load(f)
+
+            #h = H(get_pitch(det_result), get_pitch(past)+get_pitch(future))
+            #gs = GS(get_onset(det_result), get_onset(past)+get_onset(future))
+            ##print(get_pitch(middle)[:16])
+            #det_h.append(h)
+            #det_gs.append(gs)
+            #det_d.append(utils.melody_simularity(get_pitch(det_result), get_pitch(gt)))
+
+            #vli_result = load_vli_result(os.path.join(vli_dir, f"{i}_middle.midi"))
+            #h = H(get_pitch(vli_result), get_pitch(past)+get_pitch(future))
+            #gs = GS(get_onset(vli_result), get_onset(past)+get_onset(future))
+            #vli_h.append(h)
+            #vli_gs.append(gs)
+            #vli_d.append(utils.melody_simularity(get_pitch(vli_result), get_pitch(gt)))
+
+            #h = H(get_pitch(gt), get_pitch(past)+get_pitch(future))
+            #gs = GS(get_onset(gt), get_onset(past)+get_onset(future))
+            ##print(get_pitch(middle)[:16])
+            #gt_h.append(h)
+            #gt_gs.append(gs)
+            #gt_d.append(utils.melody_simularity(get_pitch(gt), get_pitch(gt)))
+
+            prog.update(1)
+        prog.close()
+
+
+
+    our_h = np.array(our_h)
     det_h = np.array(det_h)
     vli_h = np.array(vli_h)
     gt_h = np.array(gt_h)
+    struct_h = np.array(struct_h)
+    no_order_h = np.array(no_order_h)
 
-    struct_gs = np.array(struct_gs)
+    our_gs = np.array(our_gs)
     det_gs = np.array(det_gs)
     vli_gs = np.array(vli_gs)
     gt_gs = np.array(gt_gs)
+    struct_gs = np.array(struct_gs)
+    no_order_gs = np.array(no_order_gs)
 
-    struct_d = np.array(struct_d)
+    our_d = np.array(our_d)
     det_d = np.array(det_d)
     vli_d = np.array(vli_d)
     gt_d = np.array(gt_d)
+    struct_d = np.array(struct_d)
+    no_order_d = np.array(no_order_d)
 
 
-    #print(gt_h.mean(), struct_h.mean(), det_h.mean(), vli_h.mean())
-    #print(gt_gs.mean(), struct_gs.mean(), det_gs.mean(), vli_gs.mean())
-    #print(gt_d.mean(), struct_d.mean(), det_d.mean(), vli_d.mean())
+    #print(gt_h.mean(), our_h.mean(), det_h.mean(), vli_h.mean())
+    #print(gt_gs.mean(), our_gs.mean(), det_gs.mean(), vli_gs.mean())
+    #print(gt_d.mean(), our_d.mean(), det_d.mean(), vli_d.mean())
     statistics = []
-    statistics.append([struct_h, struct_gs, struct_d])
+    statistics.append([our_h, our_gs, our_d])
     statistics.append([vli_h, vli_gs, vli_d])
     statistics.append([det_h, det_gs, det_d])
     statistics.append([gt_h, gt_gs, gt_d])
+    statistics.append([struct_h, struct_gs, struct_d])
+    statistics.append([no_order_h, no_order_gs, no_order_d])
     for h, gs, d in statistics:
         print(*["%.2f$\\pm%.2f$" % (round(d.mean(),2), round(d.std(),2)) for d in (h, gs, d)], sep=" & ")
+        #print(*["%.4f$\\pm%.4f$" % (round(d.mean(),4), round(d.std(),4)) for d in (h, gs, d)], sep=" & ")
 
     df = []
-    for v in struct_h:
+    for v in our_h:
         df.append(['Ours', 'H', v])
     for v in vli_h:
         df.append(['VLI', 'H', v])
@@ -106,8 +224,8 @@ def main():
         df.append(["Real", 'H', v])
 
     #df = pd.DataFrame([
-    #    ['Ours', 'H', struct_h.mean()],
-    #    ['Ours', 'GS', struct_gs.mean()],
+    #    ['Ours', 'H', our_h.mean()],
+    #    ['Ours', 'GS', our_gs.mean()],
     #    ['VLI', 'H', vli_h.mean()],
     #    ['VLI', 'GS', vli_gs.mean()],
     #    ["Hsu et. al's work", 'H', det_h.mean()],
@@ -122,7 +240,7 @@ def main():
     ax.get_figure().savefig("H.png")
 
     df = []
-    for v in struct_gs:
+    for v in our_gs:
         df.append(['Ours', 'GS', v])
     for v in vli_gs:
         df.append(['VLI', 'GS', v])
@@ -138,7 +256,7 @@ def main():
     ax.get_figure().savefig("GS.png")
 
     df = []
-    for v in struct_d:
+    for v in our_d:
         df.append(['Ours', 'GS', v])
     for v in vli_d:
         df.append(['VLI', 'GS', v])
@@ -150,6 +268,7 @@ def main():
     ax = sns.barplot(x='', y=' ', hue='   ', data=df)
     ax.set_title('D')
     ax.get_figure().savefig("D.png")
+
 
 def get_pitch(song):
     p = []

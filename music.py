@@ -75,6 +75,13 @@ class Bar:
                 return False
         return True
 
+    @staticmethod
+    def new(bpm, beat_per_bar, beat_division):
+        bar = Bar()
+        for i in range(beat_per_bar * beat_division):
+            bar.events.append(Event(tempo=bpm))
+        return bar
+
 @dataclass
 class Song:
     name: str

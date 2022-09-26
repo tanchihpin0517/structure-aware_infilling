@@ -8,7 +8,6 @@ VAL_DATA_FILE="./dataset/pop909.pickle.testing"
 python main.py --train --cuda \
     --infilling \
     --struct-ratio 1.0 \
-    --model transformer_xl \
     --dim-model 512 \
     --dim-inner 2048 \
     --dim-subembed 512 \

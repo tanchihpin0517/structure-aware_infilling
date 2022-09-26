@@ -16,23 +16,17 @@ print(args.index_file)
 
 def main():
     template = Template(os.path.join(args.templates_dir, "index.html"))
-    songs = []
-    losses = []
-    for song_dir in os.listdir(args.songs_dir):
-        loss = song_dir
-        song_dir = os.path.join(args.songs_dir, song_dir)
-        if os.path.isdir(song_dir):
-            losses.append(loss)
-            for song in os.listdir(song_dir):
-                idx = song.split(".")[0]
-                if idx not in songs:
-                    songs.append(idx)
-    songs.sort()
-    #songs = songs[:4]
-    losses.sort()
-    losses = losses[:4]
 
-    table = {"losses":losses, "songs":songs, "github":False}
+    models = ["Ours", "VLI", "Hsu", "Real"]
+    songs = list(range(1,15+1))
+
+    table = {
+        "songs":songs,
+        "models":models,
+        "github":True,
+        "gh_url":"https://cdn.jsdelivr.net/gh/anonymousgeekyresearcher/structure-aware_infilling",
+        "repo":"",
+    }
     content = template.render(table)
     with open(args.index_file, 'w') as f:
         f.write(content)

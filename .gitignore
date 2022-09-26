@@ -13,6 +13,14 @@ pop909_test/
 /log*
 *.png
 dataset/*.pickle.*
-dataset/testing_data_origin
+dataset/testing_data_origin*
 experience
 experiment_result/
+test_song*
+train*.sh
+experience*
+experiment*
+demo_songs/
+gen*
+*64_bar*
+collect.py
