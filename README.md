@@ -1,4 +1,4 @@
-# structural_expansion
+# Melody Infilling with User-Provided Structural Context
 
 The official implementation of ISMIR 2022 paper: [Melody Infilling with User-Provided Structural Context]().
 
