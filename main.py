@@ -16,62 +16,64 @@ import copy
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--train', default=False, action='store_true')
-    parser.add_argument('--test', default=False, action='store_true')
-    parser.add_argument('--experiment', default=False, action='store_true')
-    parser.add_argument('--generate', default=False, action='store_true')
-    parser.add_argument('--cuda', default=False, action='store_true')
-    parser.add_argument('--vocab-file', type=str, default='dataset/vocab_debug.txt')
-    parser.add_argument('--data-file', type=str, default='dataset/pop909.pickle')
-    parser.add_argument('--preprocess', default=False, action='store_true')
-    parser.add_argument('--save-path', type=str, default=None)
-    parser.add_argument('--ckpt-path', type=str, default=None)
-    parser.add_argument('--cp', default=False, action='store_true')
-    parser.add_argument('--no-bar-cd', default=False, action='store_true')
-    parser.add_argument('--no-order', default=False, action='store_true')
+    parser.add_argument('--train', default=False, action='store_true', help="run training")
+    parser.add_argument('--experiment', default=False, action='store_true', help="run experiment")
+    parser.add_argument('--generate', default=False, action='store_true', help="generating with custom song file")
+    parser.add_argument('--preprocess', default=False, action='store_true', help="run preprocessing music data")
+    parser.add_argument('--cuda', default=False, action='store_true', help="enable gpu")
+    parser.add_argument('--vocab-file', type=str, default='dataset/vocab_debug.txt', help="vocabulary file which is not used since the vocabulary is hard coded currently")
+    parser.add_argument('--data-file', type=str, default='dataset/pop909.pickle', help="where to save the result of preprocessing")
+    parser.add_argument('--save-path', type=str, default=None, help="where to 'save' model checkpoint")
+    parser.add_argument('--ckpt-path', type=str, default=None, help="where to 'load' model checkpoint (resume training procedure if this value is assigned)")
+    parser.add_argument('--cp', default=False, action='store_true', help="use couponded word representation (deprecated)")
+    parser.add_argument('--no-bar-cd', default=False, action='store_true', help="disable bar-count-down technique")
+    parser.add_argument('--no-order', default=False, action='store_true', help="disable order embedding")
     parser.add_argument('--gen-num', type=int, default=16)
-    parser.add_argument('--infilling', default=False, action='store_true')
-    parser.add_argument('--bar-pe', default=False, action='store_true')
+    parser.add_argument('--infilling', default=False, action='store_true', help='(deprecated)')
     parser.add_argument('--training-data', type=str, default=None)
     parser.add_argument('--testing-data', type=str, default=None)
-    parser.add_argument('--song-file', type=str, default=None)
+    parser.add_argument('--song-file', type=str, default=None, help="user's custom input file")
 
     # data
-    parser.add_argument('--batch-size', type=int, default=1)
-    parser.add_argument('--seg-size', type=int, default=2048)
-    parser.add_argument('--epoch-num', type=int, default=1, help='number of training epochs')
-    parser.add_argument('--accm-step', type=int, default=1)
-    parser.add_argument('--max-seq-len', type=int, default=1024)
-    parser.add_argument('--bar-range-num', type=int, default=8)
-    parser.add_argument('--with-past', default=False, action='store_true')
-    parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument('--batch-size', type=int, default=1, help="batch size")
+    parser.add_argument('--seg-size', type=int, default=2048, help="segment size")
+    parser.add_argument('--epoch-num', type=int, default=1, help="how many epochs run on training")
+    parser.add_argument('--accm-step', type=int, default=1, help="the number of steps for each parameter updating")
+    parser.add_argument('--max-seq-len', type=int, default=1024, help="maximum sequence length")
+    parser.add_argument('--bar-range-num', type=int, default=8, help="the number of bars of past and future contexts")
+    parser.add_argument('--with-past', default=False, action='store_true', help="consider the loss on past context while training")
+    parser.add_argument('--seed', type=int, default=0, help="random seed")
 
     # model configuration
-    parser.add_argument('--dim-model', type=int, default=512)
-    parser.add_argument('--dim-inner', type=int, default=2048)
-    parser.add_argument('--dim-subembed', type=int, default=128)
-    parser.add_argument('--num-head', type=int, default=8)
-    parser.add_argument('--num-layer', type=int, default=8)
-    parser.add_argument('--mem-len', type=int, default=2048) # default is same as seg_size
-    parser.add_argument('--max-struct-len', type=int, default=512)
-    parser.add_argument('--struct-ratio', type=float, default=1.0)
-    parser.add_argument('--max-gen-len', type=int, default=4096, help='number of tokens in generation')
+    parser.add_argument('--dim-model', type=int, default=512, help="dimention of the input embedding")
+    parser.add_argument('--dim-inner', type=int, default=2048, help="dimention of the feedforward layer")
+    parser.add_argument('--dim-subembed', type=int, default=128, help="(deprecated)")
+    parser.add_argument('--num-head', type=int, default=8, help="number of attention heads")
+    parser.add_argument('--num-layer', type=int, default=8, help="number of attention layers")
+    parser.add_argument('--mem-len', type=int, default=2048, help="memory length") # default is same as seg_size
+    parser.add_argument('--max-struct-len', type=int, default=512, help="maxmum sequence length of the structure reference in the encoder layer")
+    parser.add_argument('--struct-ratio', type=float, default=1.0, help="(deprecated)")
+    parser.add_argument('--max-gen-len', type=int, default=4096, help='maximum number of tokens in generation')
 
     return parser.parse_args()
 
 def main():
     args = parse_args()
-    utils.enable_log()
-    utils.set_log_file("log.txt")
+    """
+    If ckpt_path is assigned, we use this checkpoint to resume the training rather than creating a new one.
+    """
     resume = (args.ckpt_path is not None)
 
     if args.preprocess:
+        """
+        total data = (testing_data, training_data)
+        0 ~ 10% => testing_data
+        10% ~ 100% => training_data
+        """
         gen_data(args.data_file, small_size=16, split_ratio=0.1)
         exit()
 
     use_bar_cd = (not args.no_bar_cd)
-    if args.bar_pe:
-        assert args.cp, "CP must be used while using bar positional encoding."
 
     torch.manual_seed(args.seed)
     random.seed(args.seed)
@@ -81,12 +83,12 @@ def main():
         if not resume:
             utils.check_save_path(args.save_path)
 
-        tokenizer = Tokenizer(args.vocab_file, use_cp=args.cp)
+        tokenizer = Tokenizer(args.vocab_file)
 
         ckpt = None
         if resume:
             ckpt = utils.load_ckpt(args.ckpt_path)
-            tokenizer = Tokenizer(args.vocab_file, use_cp=ckpt.config.use_cp)
+            tokenizer = Tokenizer(args.vocab_file)
             print("ckpt:", args.ckpt_path)
             print("epoch:", ckpt.epoch)
             print("training loss:", ckpt.training_loss)
@@ -138,7 +140,7 @@ def main():
             testing_data = pickle.load(f)
 
         ckpt = utils.load_ckpt(args.ckpt_path)
-        tokenizer = Tokenizer(args.vocab_file, use_cp=ckpt.config.use_cp)
+        tokenizer = Tokenizer(args.vocab_file)
 
         assert ckpt.config.use_cp == args.cp
         assert ckpt.config.use_bar_cd == use_bar_cd
@@ -153,6 +155,7 @@ def main():
         print("use cp:", ckpt.config.use_cp)
         print("use bar count down:", ckpt.config.use_bar_cd)
 
+        # collate testing data
         songs = []
         songs_struct = []
         for data in testing_data:
@@ -184,6 +187,7 @@ def main():
                 no_order=args.no_order,
             )
 
+    # read user's input file to generate infilling result
     if args.generate:
         ckpt = utils.load_ckpt(args.ckpt_path)
         tokenizer = Tokenizer(args.vocab_file, use_cp=ckpt.config.use_cp)
@@ -359,7 +363,7 @@ def train(
             bar_range_num = bar_range_num,
         )
 
-    if no_order:
+    if no_order: # disable order embedding
         tn_order_ids = torch.zeros(tn_order_ids.shape).to(tn_order_ids.dtype)
         val_order_ids = torch.zeros(val_order_ids.shape).to(val_order_ids.dtype)
 
@@ -370,12 +374,18 @@ def train(
         n_tokens = 0
 
         for batch_step, batch_idx in enumerate(range(0, len(tn_song_ids), batch_size)):
+            """
+            (bs, be): (batch start, batch end)
+            """
             bs, be = batch_idx, batch_idx+batch_size
             batch = tn_song_ids[bs:be]
             mems = None
             mem_order_ids = None
 
             for seg_idx in range(0, max_seq_len, seg_size): # split a long sequence into small segments
+                """
+                (ss, se): (segment start, segment end)
+                """
                 ss, se = seg_idx, seg_idx+seg_size
                 songs_batch = tn_song_ids[bs:be, ss:se].to(model.device)
                 labels_batch = tn_labels[:, bs:be, ss+1:se+1].to(model.device)
@@ -425,11 +435,17 @@ def train(
                 torch.set_printoptions(threshold=10_000)
 
                 for batch_step, batch_idx in enumerate(range(0, len(val_song_ids), batch_size)):
+                    """
+                    (bs, be): (batch start, batch end)
+                    """
                     bs, be = batch_idx, batch_idx+batch_size
                     batch = val_song_ids[bs:be]
                     mems = None
                     mem_order_ids = None
                     for seg_idx in range(0, max_seq_len, seg_size): # split a long sequence into small segments
+                        """
+                        (ss, se): (segment start, segment end)
+                        """
                         ss, se = seg_idx, seg_idx+seg_size
                         songs_batch = val_song_ids[bs:be, ss:se].to(model.device)
                         labels_batch = val_labels[:, bs:be, ss+1:se+1].to(model.device)
@@ -492,8 +508,9 @@ def prepare_training_data(
         max_struct_len=max_struct_len,
         struct_ratio=struct_ratio)
 
-    song_ids, struct_ids, struct_indices, struct_masks, order_ids, ignore_labels, expand_idx = prepare_infilling_data(
+    song_ids, struct_ids, struct_indices, struct_masks, order_ids, ignore_labels, expand_idx = get_infilling_data(
         song_ids,
+        struct_ranges,
         struct_ids,
         struct_indices,
         struct_masks,
@@ -517,26 +534,24 @@ def prepare_training_data(
         print(f"max sequence length is set to {max_seq_len}")
 
     song_ids, _ = tokenizer.pad(song_ids, 0, max_seq_len, gen_mask=False)
-    order_ids, _ = tokenizer.pad(order_ids, 0, max_seq_len, gen_mask=False, use_cp=False)
-    ignore_labels, _ = tokenizer.pad(ignore_labels, 0, max_seq_len, gen_mask=False, use_cp=False)
+    order_ids, _ = tokenizer.pad(order_ids, 0, max_seq_len, gen_mask=False)
+    ignore_labels, _ = tokenizer.pad(ignore_labels, 0, max_seq_len, gen_mask=False)
 
-    struct_ids, _ = tokenizer.pad(struct_ids, tokenizer.NONE_ID, max_seq_len, gen_mask=False, use_cp=False)
+    struct_ids, _ = tokenizer.pad(struct_ids, tokenizer.NONE_ID, max_seq_len, gen_mask=False)
     #struct_ids[struct_ids == tokenizer.NONE_ID] = 0 # set NONE_ID (-1) to 0
-    struct_masks, _ = tokenizer.pad(struct_masks, 1, max_seq_len, gen_mask=False, use_cp=False)
+    struct_masks, _ = tokenizer.pad(struct_masks, 1, max_seq_len, gen_mask=False)
     struct_masks = struct_masks.float()
 
     """
-    if use_cp:
-        labels: (C, B, L)
-    else:
-        labels: (1, B, L)
+    labels: (1, B, L)
     """
     labels = tokenizer.get_labels(song_ids, ignore_labels=ignore_labels)
 
     return song_ids, labels, order_ids, struct_ids, struct_masks, struct_seqs, struct_seq_masks,
 
-def prepare_infilling_data(
+def get_infilling_data(
     song_ids: list,
+    struct_ranges: list,
     struct_ids: list,
     struct_indices: list,
     struct_masks: list,
@@ -548,10 +563,10 @@ def prepare_infilling_data(
     only_middle=True,
 ):
     """
-    song_ids should not be padded
-    for *_ratio, use ratio because the lengths of each song are not the same
+    song_ids should not be padded here
 
-    song:        BOS (segment A) EOP (segment C) EOP (segment B) EOS (padding)
+    Output:
+        song_ids: BOS -> (segment A) -> EOP -> (segment C) -> EOP -> (segment B) -> EOS(optional)
     """
     tn_song_ids = []
     tn_struct_ids = []
@@ -564,29 +579,12 @@ def prepare_infilling_data(
 
     for i, song in enumerate(song_ids):
         assert len(song_ids[i]) == len(struct_ids[i]) == len(struct_indices[i])
-
-        first_sid = struct_ids[i][1] # ignore BOS
-        last_sid = struct_ids[i][-2] # ignore EOS
-        skip_beginning = 1
-        skip_ending = len(song_ids[i])-1
-        while skip_beginning < len(struct_ids[i]) and struct_ids[i][skip_beginning] == first_sid:
-            skip_beginning += 1
-        while skip_ending > 0 and struct_ids[i][skip_ending-1] == last_sid:
-            skip_ending -= 1
-
-        # iterate the whole song along with struct
-        s_end = skip_beginning
-        #while s_end < len(struct_indices[i]):
-        while s_end < skip_ending:
-            s_start = s_end
-            while s_end < len(struct_indices[i]) and struct_indices[i][s_end] == struct_indices[i][s_start]:
-                s_end += 1
-            sid = struct_ids[i][s_start]
-
+        """
+        sid, s_start, s_end: struct_id, struct_start, struct_end
+        """
+        for sid, s_start, s_end in struct_ranges[i][1:-1]: # avoid data without past content or future content
             #if sid == tokenizer.NONE_ID:
             #    continue # skip content without structure
-            if s_start == 0 or s_end == len(song_ids[i]):
-                continue # avoid data without past content or future content
 
             p_start = s_start - 1
             while p_start > 0 and bar_ids[i][s_start] - bar_ids[i][p_start] < bar_range_num:
@@ -597,7 +595,7 @@ def prepare_infilling_data(
                 f_end += 1
 
             """
-            p_start(past_start) ------> s_start, s_end ------> f_end(future_end)
+            p_start(past_start) ------> s_start(struct_start), s_end(struct_end) ------> f_end(future_end)
             """
             no_eos = (song_ids[i][f_end-1] != tokenizer.eos_id())
             tn_song_ids.append(song_ids[i][p_start:f_end] + ([tokenizer.eos_id()] if no_eos else []))
@@ -643,17 +641,11 @@ def prepare_infilling_data(
     )
 
 def permute_data(song_ids, struct_ids, struct_indices, struct_masks, middle_indices, model, tokenizer, only_middle=False, ignore_middle_first=False):
-    """
-    song_ids should not be padded
-    for *_ratio, use ratio because the lengths of each song are not the same
-
-    song:        BOS (segment A) EOP (segment C) EOP (segment B) EOS (padding)
-    """
     assert isinstance(song_ids, list)
     seg_ids = []
     ignore_labels = []
 
-    for i, song in enumerate(song_ids):
+    for i, _ in enumerate(song_ids):
         B_start = middle_indices[i][0]
         B_end = middle_indices[i][1]
         assert B_start != B_end

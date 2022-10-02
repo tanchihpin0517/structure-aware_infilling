@@ -113,28 +113,6 @@ def get_max_seq_len(songs, verbose=True):
               f"including {len(match)} items of total data ({round(len(match)/len(song_lens)*100, 2)}%)")
     return max_seq_len
 
-log_on: bool = False
-log_stdout: bool = True
-log_file = None
-
-def enable_log():
-    this.log_on = True
-
-def set_log_file(file):
-    this.log_file = open(file, 'w')
-
-def log(*args, **kargs):
-    if this.log_on:
-        if this.log_stdout:
-            print(*args, **kargs)
-        if this.log_file is not None:
-            print(*args, **kargs, file=this.log_file)
-
-def log_status():
-    print("enable:", this.log_on)
-    print("log stdout", this.log_stdout)
-    print("log file:", this.log_file)
-
 def melody_simularity(q, c):
     """
     c: compared
@@ -178,11 +156,6 @@ def _melody_simularity_impl(a, b, verbose=False):
     d = np.zeros([len(a), len(b)])
     w = _linear_distance
 
-    #a = [float(token[6:-1]) for token in a if token[:5]=='Pitch']
-    #b = [float(token[6:-1]) for token in b if token[:5]=='Pitch']
-
-    #length_penalty = lambda x : x*3
-
     # initialize
     for i in range(d.shape[0]):
         d[i, 0] = d[i-1, 0] + w(a[i], b[0])
@@ -194,28 +167,6 @@ def _melody_simularity_impl(a, b, verbose=False):
     for j in range(d.shape[1]):
         d[-1, j] = math.inf
 
-
-    #def get_value(i,j):
-    #    '''
-    #    Handle negative index
-    #    '''
-    #    if i<=-2 or j<=-2:
-    #        return inf
-    #    if i==-1:
-    #        return length_penalty(j+1)
-    #    if j==-1:
-    #        return length_penalty(i+1)
-    #    if i>=0 and j>=0:
-    #        return dp[i,j]
-
-
-    #for i in range(len(a)):
-    #    for j in range(len(b)):
-    #        d[i,j] = w(a[i],b[j])+min(
-    #            get_value(i-1,j-1),
-    #            get_value(i-2,j-1)+ w(a[i-1],b[j]),
-    #            get_value(i-1,j-2)+ w(a[i],b[j-1]),
-    #            )
     for i in range(1, d.shape[0]):
         for j in range(1, d.shape[1]):
             d[i, j] = min(
