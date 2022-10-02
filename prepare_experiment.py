@@ -87,4 +87,7 @@ def extract_struct(song):
 
 
 if __name__ == '__main__':
+    if not os.path.exists("./dataset/testing_data_origin/"):
+        os.makedirs("./dataset/testing_data_origin/")
+
     main("./dataset/pop909.pickle.testing", "./dataset/testing_data.pickle")

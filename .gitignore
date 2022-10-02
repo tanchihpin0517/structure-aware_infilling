@@ -16,6 +16,7 @@ dataset/*.pickle.*
 dataset/testing_data_origin*
 experience
 experiment_result/
+custom_result/
 test_song*
 train*.sh
 experience*

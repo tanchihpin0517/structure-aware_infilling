@@ -190,7 +190,7 @@ def main():
     # read user's input file to generate infilling result
     if args.generate:
         ckpt = utils.load_ckpt(args.ckpt_path)
-        tokenizer = Tokenizer(args.vocab_file, use_cp=ckpt.config.use_cp)
+        tokenizer = Tokenizer(args.vocab_file)
 
         assert ckpt.config.use_cp == args.cp
         assert ckpt.config.use_bar_cd == use_bar_cd
@@ -918,6 +918,10 @@ def generate(model, song_file, save_dir, seg_size, tokenizer, struct_ratio=1.0, 
 
     pbar = tqdm(desc="Generating", total=len(song_ids))
     songs = [song]
+
+    if not os .path.exists(save_dir):
+        os.makedirs(save_dir)
+
     for i in range(len(song_ids)):
         song_idx = i
 
