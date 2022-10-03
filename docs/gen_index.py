@@ -24,8 +24,9 @@ def main():
         "songs":songs,
         "models":models,
         "github":True,
-        "gh_url":"https://cdn.jsdelivr.net/gh/anonymousgeekyresearcher/structure-aware_infilling",
-        "repo":"",
+        "gh_url":"https://cdn.jsdelivr.net/gh/tanchihpin0517/structure-aware_infilling",
+        "repo":"https://github.com/tanchihpin0517/structure-aware_infilling",
+        "arxiv":"",
     }
     content = template.render(table)
     with open(args.index_file, 'w') as f:
