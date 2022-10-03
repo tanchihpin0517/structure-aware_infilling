@@ -185,15 +185,3 @@ def _melody_simularity_impl(a, b, verbose=False):
     result = candidates.min()
 
     return result
-
-if __name__ == "__main__":
-    a = np.array([7, 2, 3, 4, 7, 7])
-    b = np.array([2,2, 2,3,4])
-    print('original:',a,'\nquery:',b)
-    #print(_melody_simularity_impl(a, b, verbose=True))
-    #print(_melody_simularity_impl(b, a))
-    print(melody_simularity(a, b))
-    #print(_melody_simularity_impl(a, b, verbose=True))
-    #print(_melody_simularity_impl(a, b+8, verbose=True))
-    #print(_melody_simularity_impl(b+8, a, verbose=True))
-

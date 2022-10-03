@@ -89,10 +89,6 @@ def draw_sim(file_dir):
     for i in range(len(results)):
         target_scores.append(metrics.melody_sim_DP(skyline_pitch(middles[i]), skyline_pitch(results[i])))
         baseline_scores.append(metrics.melody_sim_DP(skyline_pitch(middles[i]), skyline_pitch(pasts[i])))
-    #target_scores = np.array(target_scores)
-    #baseline_scores = np.array(baseline_scores)
-    #print(target_scores.mean(), target_scores.std())
-    #print(baseline_scores.mean(), baseline_scores.std())
 
     data = []
     for score in target_scores:
@@ -116,9 +112,6 @@ def skyline_pitch(song):
     return skyline
 
 if __name__ == "__main__":
-    data_file = "/screamlab/home/tanch/structure-aware_infilling/dataset/pop909.pickle"
+    data_file = "./dataset/pop909.pickle"
     analyze(data_file=data_file)
-
-    tokenizer = Tokenizer()
-    #draw_sim("gen_midi_transxl_struct_infilling_enc/validation_loss_1")
 

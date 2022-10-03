@@ -47,15 +47,3 @@ def melody_sim_DP(a,b,w=linear_distance):
 
     result = dp[-1, -1]
     return result
-
-if __name__ == '__main__':
-    a = [7, 2, 3, 4, 7, 7]
-    b = [2,3,4]
-    print('original:',a,'\nquery:',b)
-    print(melody_sim_DP(a,b,linear_distance))
-
-    a = [1,2,3,4]
-    b = [2,3,4]
-    print('original:',a,'\nquery:',b)
-    print(melody_sim_DP(a,b,linear_distance))
-

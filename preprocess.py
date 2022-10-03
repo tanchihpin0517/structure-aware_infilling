@@ -330,10 +330,3 @@ def _test_pop909(testdir: str, song_sel: int = None, track_sel=['melody', 'bridg
     for _, song in enumerate(songs):
         with open(f"{testdir}/{song.name}.txt", "w") as f:
             f.write(f"{song}\n")
-
-if __name__ == '__main__':
-    song_sel = 746
-    #song_sel = None
-    #track_sel = ['melody', 'bridge', 'piano']
-    track_sel = ['melody', 'bridge', 'piano']
-    _test_pop909("/screamlab/home/tanch/structure-aware_infilling/pop909_test", song_sel=song_sel, track_sel=track_sel)
