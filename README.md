@@ -142,5 +142,5 @@ Note that the length of the infilling results equals to the length of the target
 If you want to generate 4 bars results, you can just provide 4 empty lines in the song file.
 
 The reason we require users to generate thier custom song file is that the songs in real world are not easy to read.
-There are many things should be considered like time alignment, and we cannot handle every exceptions.
+There are many things should be considered such time alignment, time signature detection, etc., and we cannot handle every exceptions.
 We choose to let the program reading a fixed format, leaving the convertion work for the users.
