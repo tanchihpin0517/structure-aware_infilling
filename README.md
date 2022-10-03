@@ -44,7 +44,7 @@ python main.py --train --cuda \
     --save-path "./trained_model/loss_%d.ckpt" \
     # --with-past # set this flag if you want to consider the loss of past context
 ```
-Resume from checkpoint:
+Resume from the checkpoint:
 ```sh
 TN_DATA_FILE="./dataset/pop909.pickle.training"
 VAL_DATA_FILE="./dataset/pop909.pickle.testing"
@@ -102,24 +102,27 @@ The 'song file' is provided by the user.
 The content of the song file looks like this:
 ```
 Line 1: BPM BPB(beat per bar)
-Repeat for each structure section {
+Repeated blocks for each structure section or phrase {
     Label [S or T: optional]
     Bar 1: Note(tempo position pitch duration), Note(tempo position pitch duration), ...
     Bar 2: Note(tempo position pitch duration), Note(tempo position pitch duration), ...
     ...
 }
 ```
-The first line of this file contains two values: BPM(beat per minute) and BPB(beat per bar), which are separated by space.
+The first line of this file contains two values: BPM (beat per minute) and BPB (beat per bar), which are separated by space.
 The remaining content is composed of repeated structure blocks.
+Each block of lines corresponds to a structure section or phrase.
 
 For each structure block, the first line contains the structure label and an optional tag, 'S'(source) or 'T'(target).
 If 'S' is presented, it means this section will be used as the "structural context" for the generation.
 If 'T' is presented, it means this section is the target which will be replaced by the infilling result.
+If no tag is presented, it means this section is a part of the past context or future context.
+Besides, if the label is marked as 'x', it means this section has no corresponding structural context.
 
 The lines following the label represent the bars of this section (one line for one bar).
 Each bar contains multiple notes formatted by 4-element tuples: (tempo, position, pitch, duration)
 
-Here is an example of the song file (see the whole content in "./custom_song.txt):
+Here is an example of the song file (see the whole content in "./custom_song.txt"):
 ```
 90 4 // BPM: 90, Time signature: 4/4
 x // this is the first structure section
@@ -138,6 +141,8 @@ A T // this section with the length of 4 bars (4 lines in the file) will be repl
 90 0 58 2 90 0 54 3 90 0 42 15 90 2 49 3 90 2 78 1 90 4 85 1 90 4 54 1 90 4 58 2 90 4 61 2 90 4 87 2 90 6 85 1 90 6 49 3 90 7 54 1 90 8 85 1 90 8 66 2 90 8 61 3 90 8 58 3 90 8 54 3 90 8 87 2 90 10 85 1 90 10 49 3 90 12 80 1 90 12 82 1 90 12 61 1 90 12 54 2 90 12 58 3 90 13 63 1 90 13 80 1 90 14 66 1 90 14 49 1 90 14 78 2 90 15 68 1 90 15 54 1
 // <--- snipped --->
 ```
+In this example, lines 2 & 3 are the first structure section. This section is considered as "no structural context" because it is marked with 'x'. The section contains only one bar which consists of a note with tempo = 90, position = 14 (14th sub-beat), pitch=66 and duration=2 (2 sub-beat long).
+
 Note that the length of the infilling results equals the length of the target section.
 If you want to generate 4 bars results, you can just provide 4 empty lines in the song file.
 
