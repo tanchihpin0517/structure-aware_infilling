@@ -99,7 +99,7 @@ python main.py --generate --cuda \
     --save-path "./custom_result"
 ```
 The 'song file' is provided by the user.
-The content of the song file looks like:
+The content of the song file looks like this:
 ```
 Line 1: BPM BPB(beat per bar)
 Repeat for each structure section {
@@ -109,12 +109,12 @@ Repeat for each structure section {
     ...
 }
 ```
-The first line of this file contains two value: BPM(beat per minut) and BPB(beat per bar), which are seperated by space.
-The remaining content is composed by repeated structure blocks.
+The first line of this file contains two values: BPM(beat per minute) and BPB(beat per bar), which are separated by space.
+The remaining content is composed of repeated structure blocks.
 
 For each structure block, the first line contains the structure label and an optional tag, 'S'(source) or 'T'(target).
-If 'S' is presented, it means this section will be used as the "structural context" for generation.
-If 'T' is presetned, it means this section is the target which will replaced by the infilling result.
+If 'S' is presented, it means this section will be used as the "structural context" for the generation.
+If 'T' is presented, it means this section is the target which will be replaced by the infilling result.
 
 The lines following the label represent the bars of this section (one line for one bar).
 Each bar contains multiple notes formatted by 4-element tuples: (tempo, position, pitch, duration)
@@ -138,9 +138,9 @@ A T // this section with the length of 4 bars (4 lines in the file) will be repl
 90 0 58 2 90 0 54 3 90 0 42 15 90 2 49 3 90 2 78 1 90 4 85 1 90 4 54 1 90 4 58 2 90 4 61 2 90 4 87 2 90 6 85 1 90 6 49 3 90 7 54 1 90 8 85 1 90 8 66 2 90 8 61 3 90 8 58 3 90 8 54 3 90 8 87 2 90 10 85 1 90 10 49 3 90 12 80 1 90 12 82 1 90 12 61 1 90 12 54 2 90 12 58 3 90 13 63 1 90 13 80 1 90 14 66 1 90 14 49 1 90 14 78 2 90 15 68 1 90 15 54 1
 // <--- snipped --->
 ```
-Note that the length of the infilling results equals to the length of the target section.
+Note that the length of the infilling results equals the length of the target section.
 If you want to generate 4 bars results, you can just provide 4 empty lines in the song file.
 
-The reason we require users to generate thier custom song file is that the songs in real world are not easy to read.
-There are many things should be considered such time alignment, time signature detection, etc., and we cannot handle every exceptions.
-We choose to let the program reading a fixed format, leaving the convertion work for the users.
+The reason we require users to generate their custom song file is that the songs in the real world are not easy to read.
+Many things should be considered such as time alignment, time signature detection, etc., and we cannot handle every exception.
+We choose to let the program read a fixed format, leaving the conversion work for the users.
