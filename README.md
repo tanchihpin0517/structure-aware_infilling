@@ -146,6 +146,31 @@ In this example, lines 2 & 3 are the first structure section. This section is co
 Note that the length of the infilling results equals the length of the target section.
 If you want to generate 4 bars results, you can just provide 4 empty lines in the song file.
 
-The reason we require users to generate their custom song file is that the songs in the real world are not easy to read.
+The reason we require users to generate their custom song files is that the songs in the real world are not easy to read.
 Many things should be considered such as time alignment, time signature detection, etc., and we cannot handle every exception.
 We choose to let the program read a fixed format, leaving the conversion work for the users.
+
+## License
+```
+MIT License
+
+Copyright (c) [2022] [Chih-Pin Tan]
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
