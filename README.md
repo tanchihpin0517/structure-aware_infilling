@@ -154,7 +154,7 @@ We choose to let the program read a fixed format, leaving the conversion work fo
 ```
 MIT License
 
-Copyright (c) [2022] [Chih-Pin Tan]
+Copyright (c) 2022 Chih-Pin Tan
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
