@@ -47,6 +47,12 @@ main {
   padding-left: 25%;
   padding-right: 25%;
 }
+@media screen and (max-width: 1024px) {
+  #content-div {
+    padding-left: 0%;
+    padding-right: 0%;
+  }
+}
 #inpainted-music h2, #controll-number-of-bars h2,
 #inpainted-music h3, #controll-number-of-bars h3  {
   color: #e96443;
