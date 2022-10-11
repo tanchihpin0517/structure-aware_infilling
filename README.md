@@ -2,6 +2,9 @@
 
 The official implementation of ISMIR 2022 paper: [Melody Infilling with User-Provided Structural Context](https://arxiv.org/abs/2210.02829).
 
+## Demo
+Check demos in this [website](https://tanchihpin0517.github.io/structure-aware_infilling/).
+
 ## Installation
 Clone datasets:
 ```sh
@@ -149,9 +152,6 @@ If you want to generate 4 bars results, you can just provide 4 empty lines in th
 The reason we require users to generate their custom song files is that the songs in the real world are not easy to read.
 Many things should be considered such as time alignment, time signature detection, etc., and we cannot handle every exception.
 We choose to let the program read a fixed format, leaving the conversion work for the users.
-
-## Appendix: Improved Model
-As mention in the paper, we notice 
 
 ## License
 ```
