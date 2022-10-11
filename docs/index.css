@@ -55,9 +55,14 @@ main {
   margin-bottom: 1rem;
   font-weight: normal;
 }
-#inpainted-music p, #controll-number-of-bars p {
+#inpainted-music p, #controll-number-of-bars p, #intro p {
   font-family: 'Literata', serif;
   color: #606c71;
+}
+#intro p a {
+  font-family: 'Literata', serif;
+  color: #1e6bb8;
+  text-decoration: none;
 }
 
 #inpainted-music h2, #controll-number-of-bars h2,
