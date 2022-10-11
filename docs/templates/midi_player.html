@@ -1,23 +1,23 @@
 <!-- input: models, song_idx -->
-<section id="inpainted-music-song-{{song_idx}}">
-  <h3>Song {{song_idx}}</h3>
+<section id="inpainted-music-song-{{ID}}">
+  <h3>Song {{title}}</h3>
   <div class='anchor-container'>
-    {% with sel_model="Ours" %}
-    {% for model in models %}
-    {% if model == sel_model %}
-    <a {% if github %}midi-url="{{gh_url}}/docs/assets/songs/{{model}}/{{song_idx}}.midi"{% else %}midi-url="assets/songs/{{model}}/{{song_idx}}.midi"{% endif %}
-      class='selected'>{{model}}</a>
+    {% with sel_model=models[0] %}
+    {% for i in range(len(models)) %}
+    {% if models[i] == sel_model %}
+    <a {% if github %}midi-url="{{gh_url}}/docs/assets/songs/{{models[i]}}/{{song_idx}}.midi"{% else %}midi-url="assets/songs/{{models[i]}}/{{song_idx}}.midi"{% endif %}
+      class='selected'>{{models[i]}}</a>
     {% else %}
-    <a {% if github %}midi-url="{{gh_url}}/docs/assets/songs/{{model}}/{{song_idx}}.midi"{% else %}midi-url="assets/songs/{{model}}/{{song_idx}}.midi"{% endif %}>{{model}}</a>
+    <a {% if github %}midi-url="{{gh_url}}/docs/assets/songs/{{models[i]}}/{{song_idx}}.midi"{% else %}midi-url="assets/songs/{{models[i]}}/{{song_idx}}.midi"{% endif %}>{{models[i]}}</a>
     {% endif %}
     {% endfor %}
   </div>
-  <midi-visualizer id='inpainted-music-song-{{song_idx}}-visualizer'
+  <midi-visualizer id='inpainted-music-song-{{ID}}-visualizer'
     {% if github %}src="{{gh_url}}/docs/assets/songs/{{sel_model}}/{{song_idx}}.midi"{% else %}src="assets/songs/{{sel_model}}/{{song_idx}}.midi"{% endif %}>
   </midi-visualizer>
-  <midi-player id='inpainted-music-song-{{song_idx}}-player'
+  <midi-player id='inpainted-music-song-{{ID}}-player'
     {% if github %}src="{{gh_url}}/docs/assets/songs/{{sel_model}}/{{song_idx}}.midi"{% else %}src="assets/songs/{{sel_model}}/{{song_idx}}.midi"{% endif %}
     sound-font="https://storage.googleapis.com/magentadata/js/soundfonts/salamander"
-    visualizer="#inpainted-music-song-{{song_idx}}-visualizer">
+    visualizer="#inpainted-music-song-{{ID}}-visualizer">
   </midi-player>
 </section>

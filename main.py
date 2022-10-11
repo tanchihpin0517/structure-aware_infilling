@@ -33,6 +33,8 @@ def parse_args():
     parser.add_argument('--training-data', type=str, default=None)
     parser.add_argument('--testing-data', type=str, default=None)
     parser.add_argument('--song-file', type=str, default=None, help="user's custom input file")
+    parser.add_argument('--max-gen-len', type=int, default=4096, help='maximum number of tokens in generation')
+    parser.add_argument('--long-data', default=False, action='store_true', help="train with long data (exceeding the 16 bars limit")
 
     # data
     parser.add_argument('--batch-size', type=int, default=1, help="batch size")
@@ -50,10 +52,9 @@ def parse_args():
     parser.add_argument('--dim-subembed', type=int, default=128, help="(deprecated)")
     parser.add_argument('--num-head', type=int, default=8, help="number of attention heads")
     parser.add_argument('--num-layer', type=int, default=8, help="number of attention layers")
-    parser.add_argument('--mem-len', type=int, default=2048, help="memory length") # default is same as seg_size
+    parser.add_argument('--mem-len', type=int, default=2048, help="memory length") # same as seg_size by default
     parser.add_argument('--max-struct-len', type=int, default=512, help="maxmum sequence length of the structure reference in the encoder layer")
     parser.add_argument('--struct-ratio', type=float, default=1.0, help="(deprecated)")
-    parser.add_argument('--max-gen-len', type=int, default=4096, help='maximum number of tokens in generation')
 
     return parser.parse_args()
 
@@ -133,6 +134,7 @@ def main():
             ckpt=ckpt,
             no_order=args.no_order,
             bar_range_num = args.bar_range_num,
+            long_data = args.long_data,
         )
 
     if args.experiment:
@@ -181,7 +183,7 @@ def main():
                 songs_struct,
                 args.seg_size,
                 tokenizer,
-                max_gen_len=args.max_gen_len,
+                args.max_gen_len,
                 struct_ratio=args.struct_ratio,
                 save_path=args.save_path,
                 no_order=args.no_order,
@@ -212,6 +214,7 @@ def main():
                 args.save_path,
                 args.seg_size,
                 tokenizer,
+                max_gen_len=args.max_gen_len,
                 struct_ratio=args.struct_ratio,
                 cuda=args.cuda,
             )
@@ -330,6 +333,7 @@ def train(
     ckpt=None,
     no_order = False,
     bar_range_num = 8,
+    long_data = False,
 ):
     model = model.cuda() if cuda else model
 
@@ -349,6 +353,7 @@ def train(
             only_middle=only_middle,
             max_seq_len=max_seq_len,
             bar_range_num = bar_range_num,
+            long_data = long_data,
         )
 
     val_song_ids, val_labels, val_order_ids, val_struct_ids, val_struct_masks, val_struct_seqs, val_struct_seq_masks = \
@@ -361,6 +366,7 @@ def train(
             only_middle=only_middle,
             max_seq_len=max_seq_len,
             bar_range_num = bar_range_num,
+            long_data = long_data,
         )
 
     if no_order: # disable order embedding
@@ -491,6 +497,7 @@ def prepare_training_data(
     only_middle=None,
     max_seq_len=None,
     bar_range_num = 8,
+    long_data = False,
 ):
     songs_data = load_data(data_file, track_sel=['melody', 'bridge'])
     song_ids, bar_ids, struct_ids, struct_indices, struct_ranges = tokenize(songs_data, tokenizer)
@@ -518,7 +525,9 @@ def prepare_training_data(
         model,
         tokenizer,
         only_middle=only_middle,
-        bar_range_num=bar_range_num)
+        bar_range_num=bar_range_num,
+        long = long_data,
+    )
 
     expand_idx = torch.LongTensor(expand_idx)[:, None, None].expand(-1, struct_seqs.shape[1], struct_seqs.shape[2])
     struct_seqs = torch.gather(struct_seqs, 0, expand_idx)
@@ -559,8 +568,9 @@ def get_infilling_data(
     model,
     tokenizer,
     bar_range_num = 8,
-    #max_seq_len = None,
     only_middle=True,
+    long=False,
+    max_seq_len = 4096,
 ):
     """
     song_ids should not be padded here
@@ -579,31 +589,55 @@ def get_infilling_data(
 
     for i, song in enumerate(song_ids):
         assert len(song_ids[i]) == len(struct_ids[i]) == len(struct_indices[i])
-        """
-        sid, s_start, s_end: struct_id, struct_start, struct_end
-        """
-        for sid, s_start, s_end in struct_ranges[i][1:-1]: # avoid data without past content or future content
-            #if sid == tokenizer.NONE_ID:
-            #    continue # skip content without structure
 
-            p_start = s_start - 1
-            while p_start > 0 and bar_ids[i][s_start] - bar_ids[i][p_start] < bar_range_num:
-                p_start -= 1
-
-            f_end = s_end + 1
-            while f_end < len(bar_ids[i]) and bar_ids[i][f_end] - bar_ids[i][s_end] < bar_range_num:
-                f_end += 1
-
+        if not long:
             """
-            p_start(past_start) ------> s_start(struct_start), s_end(struct_end) ------> f_end(future_end)
+            length: (8 bars past, target, 8 bars future)
+            sid, s_start, s_end: struct_id, struct_start, struct_end
             """
-            no_eos = (song_ids[i][f_end-1] != tokenizer.eos_id())
-            tn_song_ids.append(song_ids[i][p_start:f_end] + ([tokenizer.eos_id()] if no_eos else []))
-            tn_struct_ids.append(struct_ids[i][p_start:f_end] + ([tokenizer.NONE_ID] if no_eos else []))
-            tn_struct_indices.append(struct_indices[i][p_start:f_end] + ([struct_indices[i][f_end-1]+1] if no_eos else []))
-            tn_struct_masks.append(struct_masks[i][p_start:f_end] + ([1] if no_eos else []))
-            tn_middle_indices.append((s_start-p_start, s_end-p_start))
-            tn_expand_idx.append(i)
+            for sid, s_start, s_end in struct_ranges[i][1:-1]: # avoid data without past content or future content
+                #if sid == tokenizer.NONE_ID:
+                #    continue # skip content without structure
+
+                p_start = s_start - 1
+                while p_start > 0 and bar_ids[i][s_start] - bar_ids[i][p_start] < bar_range_num:
+                    p_start -= 1
+
+                f_end = s_end + 1
+                while f_end < len(bar_ids[i]) and bar_ids[i][f_end] - bar_ids[i][s_end] < bar_range_num:
+                    f_end += 1
+
+                """
+                p_start(past_start) ------> s_start(struct_start), s_end(struct_end) ------> f_end(future_end)
+                """
+                no_eos = (song_ids[i][f_end-1] != tokenizer.eos_id())
+                tn_song_ids.append(song_ids[i][p_start:f_end] + ([tokenizer.eos_id()] if no_eos else []))
+                tn_struct_ids.append(struct_ids[i][p_start:f_end] + ([tokenizer.NONE_ID] if no_eos else []))
+                tn_struct_indices.append(struct_indices[i][p_start:f_end] + ([struct_indices[i][f_end-1]+1] if no_eos else []))
+                tn_struct_masks.append(struct_masks[i][p_start:f_end] + ([1] if no_eos else []))
+                tn_middle_indices.append((s_start-p_start, s_end-p_start))
+                tn_expand_idx.append(i)
+        else:
+            """
+            length: (1/3 past, 1/3 target, 1/3 future) for each segment
+            m_start, m_end: middle_start, middle_end
+            """
+            for p_start in range(0, len(song_ids[i]), max_seq_len):
+                f_end = min(p_start+max_seq_len, len(song_ids[i]))
+                L = f_end - p_start
+                m_start = p_start + int(L/3)
+                m_end = p_start + int(L*2/3)
+
+                """
+                p_start(past_start) ------> m_start(middle_start), m_end(middle_end) ------> f_end(future_end)
+                """
+                no_eos = (song_ids[i][f_end-1] != tokenizer.eos_id())
+                tn_song_ids.append(song_ids[i][p_start:f_end] + ([tokenizer.eos_id()] if no_eos else []))
+                tn_struct_ids.append(struct_ids[i][p_start:f_end] + ([tokenizer.NONE_ID] if no_eos else []))
+                tn_struct_indices.append(struct_indices[i][p_start:f_end] + ([struct_indices[i][f_end-1]+1] if no_eos else []))
+                tn_struct_masks.append(struct_masks[i][p_start:f_end] + ([1] if no_eos else []))
+                tn_middle_indices.append((m_start-p_start, m_end-p_start))
+                tn_expand_idx.append(i)
 
     (tn_song_ids,
      tn_struct_ids,
@@ -868,8 +902,9 @@ def experiment(model, songs, songs_struct, seg_size, tokenizer, max_gen_len, sav
             if tokenizer.is_eos(gen_id):
                 break
             result.append(gen_id.tolist())
-            #if len(result) >= max_gen_len:
-            #    break
+
+            if len(result) >= max_gen_len:
+                break
         song_id = past_ids[i] + result + future_ids[i]
 
         #song_id, past_id, middle_id, future_id, result_id = gen_song_ids[i]
@@ -903,7 +938,7 @@ def experiment(model, songs, songs_struct, seg_size, tokenizer, max_gen_len, sav
         pbar.update(1)
     pbar.close()
 
-def generate(model, song_file, save_dir, seg_size, tokenizer, struct_ratio=1.0, cuda=True):
+def generate(model, song_file, save_dir, seg_size, tokenizer, max_gen_len, struct_ratio=1.0, cuda=True):
     song, s_ref_idx, s_tgt_idx = parse_song_file(song_file)
     song_token, bar_id, struct_id, struct_index, struct_range = tokenizer.encode(song, with_eos=False)
     song_id = tokenizer.token_to_id(song_token)
@@ -1004,6 +1039,9 @@ def generate(model, song_file, save_dir, seg_size, tokenizer, struct_ratio=1.0, 
             if tokenizer.is_eos(gen_id):
                 break
             result.append(gen_id.tolist())
+
+            if len(result) >= max_gen_len:
+                break
         song_id = past_ids[i] + result + future_ids[i]
 
         gen_song = tokenizer.decode(tokenizer.id_to_token(song_id), Song.copy(songs[i], with_content=False))
